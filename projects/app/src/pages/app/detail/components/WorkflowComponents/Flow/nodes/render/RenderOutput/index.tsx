@@ -78,7 +78,7 @@ const RenderOutput = ({
           position={'relative'}
         >
           <Box position={'relative'} fontWeight={'medium'}>
-            {t('common:core.workflow.Custom outputs')}
+            {t((addOutput.label || 'common:core.workflow.Custom outputs') as any)}
           </Box>
           {addOutput.description && <QuestionTip ml={1} label={addOutput.description} />}
           <Box flex={'1 0 0'} />
@@ -134,12 +134,12 @@ const RenderOutput = ({
     );
     return (
       <>
-        {renderOutputs.map((output) => {
+        {renderOutputs.map((output, i) => {
           return output.label ? (
             <FormLabel
               key={output.key}
               required={output.required}
-              _notLast={{ mb: 5 }}
+              mb={i === renderOutputs.length - 1 ? 0 : 4}
               position={'relative'}
             >
               <OutputLabel nodeId={nodeId} output={output} />

@@ -6,7 +6,9 @@ import {
 import { NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import type {
   ChatDispatchProps,
-  ModuleDispatchProps
+  DispatchNodeResultType,
+  ModuleDispatchProps,
+  SystemVariablesType
 } from '@fastgpt/global/core/workflow/runtime/type';
 import type { RuntimeNodeItemType } from '@fastgpt/global/core/workflow/runtime/type.d';
 import type {
@@ -21,7 +23,6 @@ import {
 } from '@fastgpt/global/core/workflow/node/constant';
 import { getNanoid, replaceVariable } from '@fastgpt/global/common/string/tools';
 import { getSystemTime } from '@fastgpt/global/common/time/timezone';
-import { replaceEditorVariable } from '@fastgpt/global/core/workflow/utils';
 
 import { dispatchWorkflowStart } from './init/workflowStart';
 import { dispatchChatCompletion } from './chat/oneapi';
@@ -36,10 +37,12 @@ import { dispatchQueryExtension } from './tools/queryExternsion';
 import { dispatchRunPlugin } from './plugin/run';
 import { dispatchPluginInput } from './plugin/runInput';
 import { dispatchPluginOutput } from './plugin/runOutput';
-import { removeSystemVariable, valueTypeFormat } from './utils';
+import { formatHttpError, removeSystemVariable, valueTypeFormat } from './utils';
 import {
   filterWorkflowEdges,
-  checkNodeRunStatus
+  checkNodeRunStatus,
+  textAdaptGptResponse,
+  replaceEditorVariable
 } from '@fastgpt/global/core/workflow/runtime/utils';
 import { ChatNodeUsageType } from '@fastgpt/global/support/wallet/bill/type';
 import { dispatchRunTools } from './agent/runTool/index';
@@ -60,10 +63,16 @@ import { dispatchCustomFeedback } from './tools/customFeedback';
 import { dispatchReadFiles } from './tools/readFiles';
 import { dispatchUserSelect } from './interactive/userSelect';
 import {
-  InteractiveNodeResponseItemType,
-  UserSelectInteractive
-} from '@fastgpt/global/core/workflow/template/system/userSelect/type';
-import { dispatchRunAppNode } from './agent/runApp';
+  WorkflowInteractiveResponseType,
+  InteractiveNodeResponseType
+} from '@fastgpt/global/core/workflow/template/system/interactive/type';
+import { dispatchRunAppNode } from './plugin/runApp';
+import { dispatchLoop } from './loop/runLoop';
+import { dispatchLoopEnd } from './loop/runLoopEnd';
+import { dispatchLoopStart } from './loop/runLoopStart';
+import { dispatchFormInput } from './interactive/formInput';
+import { dispatchToolParams } from './agent/runTool/toolParams';
+import { responseWrite } from '../../../common/response';
 
 const callbackMap: Record<FlowNodeTypeEnum, Function> = {
   [FlowNodeTypeEnum.workflowStart]: dispatchWorkflowStart,
@@ -81,6 +90,7 @@ const callbackMap: Record<FlowNodeTypeEnum, Function> = {
   [FlowNodeTypeEnum.queryExtension]: dispatchQueryExtension,
   [FlowNodeTypeEnum.tools]: dispatchRunTools,
   [FlowNodeTypeEnum.stopTool]: dispatchStopToolCall,
+  [FlowNodeTypeEnum.toolParams]: dispatchToolParams,
   [FlowNodeTypeEnum.lafModule]: dispatchLafRequest,
   [FlowNodeTypeEnum.ifElseNode]: dispatchIfElse,
   [FlowNodeTypeEnum.variableUpdate]: dispatchUpdateVariable,
@@ -89,12 +99,17 @@ const callbackMap: Record<FlowNodeTypeEnum, Function> = {
   [FlowNodeTypeEnum.customFeedback]: dispatchCustomFeedback,
   [FlowNodeTypeEnum.readFiles]: dispatchReadFiles,
   [FlowNodeTypeEnum.userSelect]: dispatchUserSelect,
+  [FlowNodeTypeEnum.loop]: dispatchLoop,
+  [FlowNodeTypeEnum.loopStart]: dispatchLoopStart,
+  [FlowNodeTypeEnum.loopEnd]: dispatchLoopEnd,
+  [FlowNodeTypeEnum.formInput]: dispatchFormInput,
 
   // none
   [FlowNodeTypeEnum.systemConfig]: dispatchSystemConfig,
   [FlowNodeTypeEnum.pluginConfig]: () => Promise.resolve(),
   [FlowNodeTypeEnum.emptyNode]: () => Promise.resolve(),
   [FlowNodeTypeEnum.globalVariable]: () => Promise.resolve(),
+  [FlowNodeTypeEnum.comment]: () => Promise.resolve(),
 
   [FlowNodeTypeEnum.runApp]: dispatchAppRequest // abandoned
 };
@@ -117,12 +132,51 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     ...props
   } = data;
 
+  // 初始化深度和自动增加深度，避免无限嵌套
+  if (!props.workflowDispatchDeep) {
+    props.workflowDispatchDeep = 1;
+  } else {
+    props.workflowDispatchDeep += 1;
+  }
+
+  if (props.workflowDispatchDeep > 20) {
+    return {
+      flowResponses: [],
+      flowUsages: [],
+      debugResponse: {
+        finishedNodes: [],
+        finishedEdges: [],
+        nextStepRunNodes: []
+      },
+      [DispatchNodeResponseKeyEnum.runTimes]: 1,
+      [DispatchNodeResponseKeyEnum.assistantResponses]: [],
+      [DispatchNodeResponseKeyEnum.toolResponses]: null,
+      newVariables: removeSystemVariable(variables)
+    };
+  }
+
+  let workflowRunTimes = 0;
+
   // set sse response headers
   if (stream && res) {
     res.setHeader('Content-Type', 'text/event-stream;charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
+
+    // 10s sends a message to prevent the browser from thinking that the connection is disconnected
+    const sendStreamTimerSign = () => {
+      setTimeout(() => {
+        props?.workflowStreamResponse?.({
+          event: SseResponseEventEnum.answer,
+          data: textAdaptGptResponse({
+            text: ''
+          })
+        });
+        sendStreamTimerSign();
+      }, 10000);
+    };
+    sendStreamTimerSign();
   }
 
   variables = {
@@ -133,8 +187,15 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
   let chatResponses: ChatHistoryItemResType[] = []; // response request and save to database
   let chatAssistantResponse: AIChatItemValueItemType[] = []; // The value will be returned to the user
   let chatNodeUsages: ChatNodeUsageType[] = [];
-  let toolRunResponse: ToolRunResponseItemType;
+  let toolRunResponse: ToolRunResponseItemType; // Run with tool mode. Result will response to tool node.
   let debugNextStepRunNodes: RuntimeNodeItemType[] = [];
+  // 记录交互节点，交互节点需要在工作流完全结束后再进行计算
+  let nodeInteractiveResponse:
+    | {
+        entryNodeIds: string[];
+        interactiveResponse: InteractiveNodeResponseType;
+      }
+    | undefined;
 
   /* Store special response field  */
   function pushStore(
@@ -144,21 +205,29 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       responseData,
       nodeDispatchUsages,
       toolResponses,
-      assistantResponses
-    }: {
-      [NodeOutputKeyEnum.answerText]?: string;
-      [DispatchNodeResponseKeyEnum.nodeResponse]?: ChatHistoryItemResType;
-      [DispatchNodeResponseKeyEnum.nodeDispatchUsages]?: ChatNodeUsageType[];
-      [DispatchNodeResponseKeyEnum.toolResponses]?: ToolRunResponseItemType;
-      [DispatchNodeResponseKeyEnum.assistantResponses]?: AIChatItemValueItemType[]; // tool module, save the response value
-    }
+      assistantResponses,
+      rewriteHistories,
+      runTimes = 1
+    }: Omit<
+      DispatchNodeResultType<{
+        [NodeOutputKeyEnum.answerText]?: string;
+        [DispatchNodeResponseKeyEnum.nodeResponse]?: ChatHistoryItemResType;
+      }>,
+      'nodeResponse'
+    >
   ) {
+    // Add run times
+    workflowRunTimes += runTimes;
+    props.maxRunTimes -= runTimes;
+
     if (responseData) {
       chatResponses.push(responseData);
     }
+
     if (nodeDispatchUsages) {
       chatNodeUsages = chatNodeUsages.concat(nodeDispatchUsages);
     }
+
     if (toolResponses !== undefined) {
       if (Array.isArray(toolResponses) && toolResponses.length === 0) return;
       if (typeof toolResponses === 'object' && Object.keys(toolResponses).length === 0) {
@@ -166,6 +235,8 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       }
       toolRunResponse = toolResponses;
     }
+
+    // Histories store
     if (assistantResponses) {
       chatAssistantResponse = chatAssistantResponse.concat(assistantResponses);
     } else if (answerText) {
@@ -181,12 +252,19 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
         });
       }
     }
+
+    if (rewriteHistories) {
+      histories = rewriteHistories;
+    }
   }
   /* Pass the output of the node, to get next nodes and update edge status */
   function nodeOutput(
     node: RuntimeNodeItemType,
     result: Record<string, any> = {}
-  ): RuntimeNodeItemType[] {
+  ): {
+    nextStepActiveNodes: RuntimeNodeItemType[];
+    nextStepSkipNodes: RuntimeNodeItemType[];
+  } {
     pushStore(node, result);
 
     // Assign the output value to the next node
@@ -211,16 +289,32 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       }
     });
 
-    const nextStepNodes = runtimeNodes.filter((node) => {
-      return targetEdges.some((item) => item.target === node.nodeId);
+    const nextStepActiveNodes: RuntimeNodeItemType[] = [];
+    const nextStepSkipNodes: RuntimeNodeItemType[] = [];
+    runtimeNodes.forEach((node) => {
+      if (targetEdges.some((item) => item.target === node.nodeId && item.status === 'active')) {
+        nextStepActiveNodes.push(node);
+      }
+      if (targetEdges.some((item) => item.target === node.nodeId && item.status === 'skipped')) {
+        nextStepSkipNodes.push(node);
+      }
     });
 
     if (props.mode === 'debug') {
-      debugNextStepRunNodes = debugNextStepRunNodes.concat(nextStepNodes);
-      return [];
+      debugNextStepRunNodes = debugNextStepRunNodes.concat([
+        ...nextStepActiveNodes,
+        ...nextStepSkipNodes
+      ]);
+      return {
+        nextStepActiveNodes: [],
+        nextStepSkipNodes: []
+      };
     }
 
-    return nextStepNodes;
+    return {
+      nextStepActiveNodes,
+      nextStepSkipNodes
+    };
   }
 
   /* Have interactive result, computed edges and node outputs */
@@ -229,7 +323,7 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     interactiveResponse
   }: {
     entryNodeIds: string[];
-    interactiveResponse: UserSelectInteractive;
+    interactiveResponse: InteractiveNodeResponseType;
   }): AIChatItemValueItemType {
     // Get node outputs
     const nodeOutputs: NodeOutputItemType[] = [];
@@ -245,24 +339,23 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       });
     });
 
-    const interactiveResult: InteractiveNodeResponseItemType = {
+    const interactiveResult: WorkflowInteractiveResponseType = {
       ...interactiveResponse,
       entryNodeIds,
       memoryEdges: runtimeEdges.map((edge) => ({
         ...edge,
-        status: entryNodeIds.includes(edge.target)
-          ? 'active'
-          : entryNodeIds.includes(edge.source)
-            ? 'waiting'
-            : edge.status
+        status: entryNodeIds.includes(edge.target) ? 'active' : edge.status
       })),
       nodeOutputs
     };
 
-    props.workflowStreamResponse?.({
-      event: SseResponseEventEnum.interactive,
-      data: { interactive: interactiveResult }
-    });
+    // Tool call, not need interactive response
+    if (!props.isToolCall) {
+      props.workflowStreamResponse?.({
+        event: SseResponseEventEnum.interactive,
+        data: { interactive: interactiveResult }
+      });
+    }
 
     return {
       type: ChatItemValueTypeEnum.interactive,
@@ -270,10 +363,8 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     };
   }
 
-  // 每个节点 运行/跳过 后，初始化边的状态
-  function nodeRunAfterHook(node: RuntimeNodeItemType) {
-    node.isEntry = false;
-
+  // 每个节点确定 运行/跳过 前，初始化边的状态
+  function nodeRunBeforeHook(node: RuntimeNodeItemType) {
     runtimeEdges.forEach((item) => {
       if (item.target === node.nodeId) {
         item.status = 'waiting';
@@ -281,69 +372,95 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     });
   }
   /* Check node run/skip or wait */
-  function checkNodeCanRun(nodes: RuntimeNodeItemType[] = []): Promise<any> {
-    return Promise.all(
-      nodes.map(async (node) => {
-        const status = checkNodeRunStatus({
-          node,
-          runtimeEdges
-        });
+  async function checkNodeCanRun(
+    node: RuntimeNodeItemType,
+    skippedNodeIdList = new Set<string>()
+  ): Promise<RuntimeNodeItemType[]> {
+    if (res?.closed || props.maxRunTimes <= 0) return [];
+    // Thread avoidance
+    await surrenderProcess();
 
-        if (res?.closed || props.maxRunTimes <= 0) return;
+    addLog.debug(`Run node`, { maxRunTimes: props.maxRunTimes, appId: props.runningAppInfo.id });
 
-        addLog.debug(`Run node`, { maxRunTimes: props.maxRunTimes, uid: user._id });
-
-        // Thread avoidance
-        await surrenderProcess();
-
-        if (status === 'run') {
-          addLog.debug(`[dispatchWorkFlow] nodeRunWithActive: ${node.name}`);
-          return nodeRunWithActive(node);
-        }
-        if (status === 'skip') {
-          addLog.debug(`[dispatchWorkFlow] nodeRunWithSkip: ${node.name}`);
-          return nodeRunWithSkip(node);
-        }
-
-        return;
-      })
-    ).then((result) => {
-      props.maxRunTimes--;
-
-      const flat = result.flat().filter(Boolean) as unknown as {
-        node: RuntimeNodeItemType;
-        runStatus: 'run' | 'skip';
-        result: Record<string, any>;
-      }[];
-      // If there are no running nodes, the workflow is complete
-      if (flat.length === 0) return;
-
-      // Update the node output at the end of the run and get the next nodes
-      const nextNodes = flat.map((item) => nodeOutput(item.node, item.result)).flat();
-      // Remove repeat nodes(Make sure that the node is only executed once)
-      const filterNextNodes = nextNodes.filter(
-        (node, index, self) => self.findIndex((t) => t.nodeId === node.nodeId) === index
-      );
-
-      // In the current version, only one interactive node is allowed at the same time
-      const haveInteractiveResponse = flat
-        .map((response) => {
-          const interactiveResponse = response.result?.[DispatchNodeResponseKeyEnum.interactive];
-          if (interactiveResponse) {
-            chatAssistantResponse.push(
-              handleInteractiveResult({
-                entryNodeIds: [response.node.nodeId],
-                interactiveResponse
-              })
-            );
-            return 1;
-          }
-        })
-        .filter(Boolean);
-      if (haveInteractiveResponse.length > 0) return;
-
-      return checkNodeCanRun(filterNextNodes);
+    // Get node run status by edges
+    const status = checkNodeRunStatus({
+      node,
+      runtimeEdges
     });
+
+    const nodeRunResult = await (() => {
+      if (status === 'run') {
+        nodeRunBeforeHook(node);
+        addLog.debug(`[dispatchWorkFlow] nodeRunWithActive: ${node.name}`);
+        return nodeRunWithActive(node);
+      }
+      if (status === 'skip' && !skippedNodeIdList.has(node.nodeId)) {
+        nodeRunBeforeHook(node);
+        props.maxRunTimes -= 0.1;
+        skippedNodeIdList.add(node.nodeId);
+        addLog.debug(`[dispatchWorkFlow] nodeRunWithSkip: ${node.name}`);
+        return nodeRunWithSkip(node);
+      }
+    })();
+
+    if (!nodeRunResult) return [];
+
+    /* 
+      特殊情况：
+      通过 skipEdges 可以判断是运行了分支节点。
+      由于分支节点，可能会实现递归调用（skip 连线往前递归）
+      需要把分支节点也加入到已跳过的记录里，可以保证递归 skip 运行时，至多只会传递到当前分支节点，不会影响分支后的内容。
+    */
+    const skipEdges = (nodeRunResult.result[DispatchNodeResponseKeyEnum.skipHandleId] ||
+      []) as string[];
+    if (skipEdges && skipEdges?.length > 0) {
+      skippedNodeIdList.add(node.nodeId);
+    }
+
+    // In the current version, only one interactive node is allowed at the same time
+    const interactiveResponse = nodeRunResult.result?.[DispatchNodeResponseKeyEnum.interactive];
+    if (interactiveResponse) {
+      pushStore(nodeRunResult.node, nodeRunResult.result);
+      nodeInteractiveResponse = {
+        entryNodeIds: [nodeRunResult.node.nodeId],
+        interactiveResponse
+      };
+      return [];
+    }
+
+    // Update the node output at the end of the run and get the next nodes
+    let { nextStepActiveNodes, nextStepSkipNodes } = nodeOutput(
+      nodeRunResult.node,
+      nodeRunResult.result
+    );
+    // Remove repeat nodes(Make sure that the node is only executed once)
+    nextStepActiveNodes = nextStepActiveNodes.filter(
+      (node, index, self) => self.findIndex((t) => t.nodeId === node.nodeId) === index
+    );
+    nextStepSkipNodes = nextStepSkipNodes.filter(
+      (node, index, self) => self.findIndex((t) => t.nodeId === node.nodeId) === index
+    );
+
+    // Run next nodes（先运行 run 的，再运行 skip 的）
+    const nextStepActiveNodesResults = (
+      await Promise.all(nextStepActiveNodes.map((node) => checkNodeCanRun(node)))
+    ).flat();
+
+    // 如果已经 active 运行过，不再执行 skip（active 中有闭环）
+    nextStepSkipNodes = nextStepSkipNodes.filter(
+      (node) => !nextStepActiveNodesResults.some((item) => item.nodeId === node.nodeId)
+    );
+
+    const nextStepSkipNodesResults = (
+      await Promise.all(nextStepSkipNodes.map((node) => checkNodeCanRun(node, skippedNodeIdList)))
+    ).flat();
+
+    return [
+      ...nextStepActiveNodes,
+      ...nextStepSkipNodes,
+      ...nextStepActiveNodesResults,
+      ...nextStepSkipNodesResults
+    ];
   }
   /* Inject data into module input */
   function getNodeRunParams(node: RuntimeNodeItemType) {
@@ -366,7 +483,15 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       : {};
 
     node.inputs.forEach((input) => {
+      // Special input, not format
       if (input.key === dynamicInput?.key) return;
+
+      // Skip some special key
+      if (input.key === NodeInputKeyEnum.childrenNodeIdList) {
+        params[input.key] = input.value;
+
+        return;
+      }
 
       // replace {{xx}} variables
       let value = replaceVariable(input.value, variables);
@@ -390,15 +515,18 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       if (input.canEdit && dynamicInput && params[dynamicInput.key]) {
         params[dynamicInput.key][input.key] = valueTypeFormat(value, input.valueType);
       }
-
       params[input.key] = valueTypeFormat(value, input.valueType);
     });
 
     return params;
   }
-  async function nodeRunWithActive(node: RuntimeNodeItemType) {
+  async function nodeRunWithActive(node: RuntimeNodeItemType): Promise<{
+    node: RuntimeNodeItemType;
+    runStatus: 'run';
+    result: Record<string, any>;
+  }> {
     // push run status messages
-    if (node.showStatus) {
+    if (node.showStatus && !props.isToolCall) {
       props.workflowStreamResponse?.({
         event: SseResponseEventEnum.flowNodeStatus,
         data: {
@@ -429,7 +557,21 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     // run module
     const dispatchRes: Record<string, any> = await (async () => {
       if (callbackMap[node.flowNodeType]) {
-        return callbackMap[node.flowNodeType](dispatchData);
+        try {
+          return await callbackMap[node.flowNodeType](dispatchData);
+        } catch (error) {
+          // Get source handles of outgoing edges
+          const targetEdges = runtimeEdges.filter((item) => item.source === node.nodeId);
+          const skipHandleIds = targetEdges.map((item) => item.sourceHandle);
+
+          // Skip all edges and return error
+          return {
+            [DispatchNodeResponseKeyEnum.nodeResponse]: {
+              error: formatHttpError(error)
+            },
+            [DispatchNodeResponseKeyEnum.skipHandleId]: skipHandleIds
+          };
+        }
       }
       return {};
     })();
@@ -454,7 +596,13 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       dispatchRes[item.key] = valueTypeFormat(item.defaultValue, item.valueType);
     });
 
-    nodeRunAfterHook(node);
+    // Update new variables
+    if (dispatchRes[DispatchNodeResponseKeyEnum.newVariables]) {
+      variables = {
+        ...variables,
+        ...dispatchRes[DispatchNodeResponseKeyEnum.newVariables]
+      };
+    }
 
     return {
       node,
@@ -465,10 +613,13 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       }
     };
   }
-  async function nodeRunWithSkip(node: RuntimeNodeItemType) {
-    // 其后所有target的节点，都设置为skip
+  async function nodeRunWithSkip(node: RuntimeNodeItemType): Promise<{
+    node: RuntimeNodeItemType;
+    runStatus: 'skip';
+    result: Record<string, any>;
+  }> {
+    // Set target edges status to skipped
     const targetEdges = runtimeEdges.filter((item) => item.source === node.nodeId);
-    nodeRunAfterHook(node);
 
     return {
       node,
@@ -479,48 +630,74 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     };
   }
 
-  // start process width initInput
-  const entryNodes = runtimeNodes.filter((item) => item.isEntry);
+  try {
+    // start process width initInput
+    const entryNodes = runtimeNodes.filter((item) => item.isEntry);
+    // reset entry
+    runtimeNodes.forEach((item) => {
+      // Interactive node is not the entry node, return interactive result
+      if (
+        item.flowNodeType !== FlowNodeTypeEnum.userSelect &&
+        item.flowNodeType !== FlowNodeTypeEnum.formInput &&
+        item.flowNodeType !== FlowNodeTypeEnum.tools
+      ) {
+        item.isEntry = false;
+      }
+    });
+    await Promise.all(entryNodes.map((node) => checkNodeCanRun(node)));
 
-  // reset entry
-  // runtimeNodes.forEach((item) => {
-  //   item.isEntry = false;
-  // });
-  await checkNodeCanRun(entryNodes);
+    // focus try to run pluginOutput
+    const pluginOutputModule = runtimeNodes.find(
+      (item) => item.flowNodeType === FlowNodeTypeEnum.pluginOutput
+    );
+    if (pluginOutputModule && props.mode !== 'debug') {
+      await nodeRunWithActive(pluginOutputModule);
+    }
 
-  // focus try to run pluginOutput
-  const pluginOutputModule = runtimeNodes.find(
-    (item) => item.flowNodeType === FlowNodeTypeEnum.pluginOutput
-  );
-  if (pluginOutputModule && props.mode !== 'debug') {
-    await nodeRunWithActive(pluginOutputModule);
+    // Interactive node
+    const interactiveResult = (() => {
+      if (nodeInteractiveResponse) {
+        const interactiveAssistant = handleInteractiveResult({
+          entryNodeIds: nodeInteractiveResponse.entryNodeIds,
+          interactiveResponse: nodeInteractiveResponse.interactiveResponse
+        });
+        chatAssistantResponse.push(interactiveAssistant);
+        return interactiveAssistant.interactive;
+      }
+    })();
+
+    return {
+      flowResponses: chatResponses,
+      flowUsages: chatNodeUsages,
+      debugResponse: {
+        finishedNodes: runtimeNodes,
+        finishedEdges: runtimeEdges,
+        nextStepRunNodes: debugNextStepRunNodes
+      },
+      workflowInteractiveResponse: interactiveResult,
+      [DispatchNodeResponseKeyEnum.runTimes]: workflowRunTimes,
+      [DispatchNodeResponseKeyEnum.assistantResponses]:
+        mergeAssistantResponseAnswerText(chatAssistantResponse),
+      [DispatchNodeResponseKeyEnum.toolResponses]: toolRunResponse,
+      newVariables: removeSystemVariable(variables)
+    };
+  } catch (error) {
+    return Promise.reject(error);
   }
-
-  return {
-    flowResponses: chatResponses,
-    flowUsages: chatNodeUsages,
-    debugResponse: {
-      finishedNodes: runtimeNodes,
-      finishedEdges: runtimeEdges,
-      nextStepRunNodes: debugNextStepRunNodes
-    },
-    [DispatchNodeResponseKeyEnum.assistantResponses]:
-      mergeAssistantResponseAnswerText(chatAssistantResponse),
-    [DispatchNodeResponseKeyEnum.toolResponses]: toolRunResponse,
-    newVariables: removeSystemVariable(variables)
-  };
 }
 
 /* get system variable */
 export function getSystemVariable({
   user,
-  app,
+  runningAppInfo,
   chatId,
   responseChatItemId,
-  histories = []
-}: Props) {
+  histories = [],
+  uid
+}: Props): SystemVariablesType {
   return {
-    appId: String(app._id),
+    userId: uid,
+    appId: String(runningAppInfo.id),
     chatId,
     responseChatItemId,
     histories,
@@ -543,6 +720,14 @@ export const mergeAssistantResponseAnswerText = (response: AIChatItemValueItemTy
       }
     }
     result.push(item);
+  }
+
+  // If result is empty, auto add a text message
+  if (result.length === 0) {
+    result.push({
+      type: ChatItemValueTypeEnum.text,
+      text: { content: '' }
+    });
   }
 
   return result;

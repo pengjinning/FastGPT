@@ -9,6 +9,8 @@ import { getTeamPlanStatus } from './team/api';
 import { getTeamMembers } from '@/web/support/user/team/api';
 import { TeamMemberItemType } from '@fastgpt/global/support/user/team/type';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
+import { MemberGroupListType } from '@fastgpt/global/support/permission/memberGroup/type';
+import { getGroupList } from './team/group/api';
 
 type State = {
   systemMsgReadId: string;
@@ -24,6 +26,10 @@ type State = {
 
   teamMembers: TeamMemberItemType[];
   loadAndGetTeamMembers: (init?: boolean) => Promise<TeamMemberItemType[]>;
+
+  teamMemberGroups: MemberGroupListType;
+  myGroups: MemberGroupListType;
+  loadAndGetGroups: (init?: boolean) => Promise<MemberGroupListType>;
 };
 
 export const useUserStore = create<State>()(
@@ -90,12 +96,31 @@ export const useUserStore = create<State>()(
           if (!useSystemStore.getState()?.feConfigs?.isPlus) return [];
 
           const randomRefresh = Math.random() > 0.7;
-          if (!randomRefresh && !init && get().teamMembers.length)
+          if (!randomRefresh && !init && get().teamMembers?.length)
             return Promise.resolve(get().teamMembers);
 
           const res = await getTeamMembers();
           set((state) => {
             state.teamMembers = res;
+          });
+
+          return res;
+        },
+        teamMemberGroups: [],
+        myGroups: [],
+        loadAndGetGroups: async (init = false) => {
+          if (!useSystemStore.getState()?.feConfigs?.isPlus) return [];
+
+          const randomRefresh = Math.random() > 0.7;
+          if (!randomRefresh && !init && get().teamMemberGroups.length)
+            return Promise.resolve(get().teamMemberGroups);
+
+          const res = await getGroupList();
+          set((state) => {
+            state.teamMemberGroups = res;
+            state.myGroups = res.filter((item) =>
+              item.members.map((i) => String(i.tmbId)).includes(String(state.userInfo?.team?.tmbId))
+            );
           });
 
           return res;

@@ -77,10 +77,7 @@ export default function VariableLabelPickerPlugin({
       onSelectOption={onSelectOption}
       triggerFn={checkForTriggerMatch}
       options={variableFilter(variables, queryString || '')}
-      menuRenderFn={(
-        anchorElementRef,
-        { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }
-      ) => {
+      menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp }) => {
         if (anchorElementRef.current == null) {
           return null;
         }
@@ -132,7 +129,7 @@ export default function VariableLabelPickerPlugin({
                             color={'myGray.600'}
                             fontWeight={'semibold'}
                           >
-                            {item.label}
+                            {t(item.label as any)}
                           </Box>
                         </Flex>
                         {item.children?.map((child) => (

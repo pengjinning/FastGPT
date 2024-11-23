@@ -18,7 +18,7 @@ import {
 import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import MyInput from '@/components/MyInput';
 import { DatasetTagType } from '@fastgpt/global/core/dataset/type';
-import { ScrollListType, useScrollPagination } from '@fastgpt/web/hooks/useScrollPagination';
+import { ScrollListType, useVirtualScrollPagination } from '@fastgpt/web/hooks/useScrollPagination';
 import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
 import PopoverConfirm from '@fastgpt/web/components/common/MyPopover/PopoverConfirm';
 import { DatasetCollectionsListItemType } from '@/global/core/dataset/type';
@@ -121,14 +121,15 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
 
   // Tags list
   const {
-    list,
+    scrollDataList: renderTags,
+    totalData: collectionTags,
     ScrollList,
     isLoading: isRequesting,
     fetchData,
     total: tagsTotal
-  } = useScrollPagination(getDatasetCollectionTags, {
+  } = useVirtualScrollPagination(getDatasetCollectionTags, {
     refreshDeps: [''],
-    debounceWait: 300,
+    // debounceWait: 300,
 
     itemHeight: 56,
     overscan: 10,
@@ -142,12 +143,12 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
 
   // Collections list
   const {
-    list: collectionsList,
+    scrollDataList: collectionsList,
     ScrollList: ScrollListCollections,
     isLoading: collectionsListLoading
-  } = useScrollPagination(getScrollCollectionList, {
+  } = useVirtualScrollPagination(getScrollCollectionList, {
     refreshDeps: [searchText],
-    debounceWait: 300,
+    // debounceWait: 300,
 
     itemHeight: 37,
     overscan: 10,
@@ -177,6 +178,7 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
       isOpen
       onClose={onClose}
       iconSrc="core/dataset/tag"
+      iconColor={'primary.600'}
       title={t('dataset:tag.manage')}
       w={'580px'}
       h={'600px'}
@@ -194,7 +196,11 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
             pt={6}
           >
             <MyIcon name="menu" w={5} />
-            <Box ml={2} fontWeight={'semibold'} flex={'1 0 0'}>{`共${tagsTotal}个标签`}</Box>
+            <Box ml={2} fontWeight={'semibold'} flex={'1 0 0'}>
+              {t('dataset:tag.total_tags', {
+                total: tagsTotal
+              })}
+            </Box>
             <Button
               size={'sm'}
               leftIcon={<MyIcon name="common/addLight" w={4} />}
@@ -216,9 +222,10 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
                   onChange={(e) => setNewTag(e.target.value)}
                   ref={tagInputRef}
                   w={'200px'}
-                  onBlur={() => {
-                    if (newTag && !list.map((item) => item.data.tag).includes(newTag)) {
-                      onCreateCollectionTag(newTag);
+                  onBlur={async () => {
+                    if (newTag && !collectionTags.map((item) => item.tag).includes(newTag)) {
+                      await onCreateCollectionTag(newTag);
+                      fetchData(1);
                     }
                     setNewTag(undefined);
                   }}
@@ -232,7 +239,7 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
             fontSize={'sm'}
             EmptyChildren={<EmptyTip text={t('dataset:dataset.no_tags')} />}
           >
-            {list.map((listItem) => {
+            {renderTags.map((listItem) => {
               const item = listItem.data;
               const tagUsage = tagUsages?.find((tagUsage) => tagUsage.tagId === item._id);
               const collections = tagUsage?.collections || [];
@@ -288,7 +295,9 @@ const TagManageModal = ({ onClose }: { onClose: () => void }) => {
                           onBlur={() => {
                             if (
                               currentEditTagContent &&
-                              !list.map((item) => item.data.tag).includes(currentEditTagContent)
+                              !collectionTags
+                                .map((item) => item.tag)
+                                .includes(currentEditTagContent)
                             ) {
                               onUpdateCollectionTag({
                                 tag: currentEditTagContent,

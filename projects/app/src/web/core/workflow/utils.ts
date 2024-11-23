@@ -16,40 +16,50 @@ import { EmptyNode } from '@fastgpt/global/core/workflow/template/system/emptyNo
 import { StoreEdgeItemType } from '@fastgpt/global/core/workflow/type/edge';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
 import { getGlobalVariableNode } from './adapt';
-import { VARIABLE_NODE_ID, WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
+import { WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
 import { NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import { EditorVariablePickerType } from '@fastgpt/web/components/common/Textarea/PromptEditor/type';
 import {
   formatEditorVariablePickerIcon,
   getAppChatConfig,
-  getGuideModule
+  getGuideModule,
+  isValidArrayReferenceValue,
+  isValidReferenceValue
 } from '@fastgpt/global/core/workflow/utils';
-import { getSystemVariables } from '../app/utils';
 import { TFunction } from 'next-i18next';
 import {
   FlowNodeInputItemType,
   FlowNodeOutputItemType,
-  ReferenceValueProps
+  ReferenceItemValueType
 } from '@fastgpt/global/core/workflow/type/io';
 import { IfElseListItemType } from '@fastgpt/global/core/workflow/template/system/ifElse/type';
 import { VariableConditionEnum } from '@fastgpt/global/core/workflow/template/system/ifElse/constant';
 import { AppChatConfigType } from '@fastgpt/global/core/app/type';
 import { cloneDeep, isEqual } from 'lodash';
 import { getInputComponentProps } from '@fastgpt/global/core/workflow/node/io/utils';
+import { workflowSystemVariables } from '../app/utils';
 
 export const nodeTemplate2FlowNode = ({
   template,
   position,
-  selected
+  selected,
+  parentNodeId,
+  zIndex,
+  t
 }: {
   template: FlowNodeTemplateType;
   position: XYPosition;
   selected?: boolean;
+  parentNodeId?: string;
+  zIndex?: number;
+  t: TFunction;
 }): Node<FlowNodeItemType> => {
   // replace item data
   const moduleItem: FlowNodeItemType = {
     ...template,
-    nodeId: getNanoid()
+    name: t(template.name as any),
+    nodeId: getNanoid(),
+    parentNodeId
   };
 
   return {
@@ -57,15 +67,22 @@ export const nodeTemplate2FlowNode = ({
     type: moduleItem.flowNodeType,
     data: moduleItem,
     position: position,
-    selected
+    selected,
+    zIndex
   };
 };
 export const storeNode2FlowNode = ({
   item: storeNode,
-  selected = false
+  selected = false,
+  zIndex,
+  parentNodeId,
+  t
 }: {
   item: StoreNodeItemType;
   selected?: boolean;
+  zIndex?: number;
+  parentNodeId?: string;
+  t: TFunction;
 }): Node<FlowNodeItemType> => {
   // init some static data
   const template =
@@ -82,11 +99,11 @@ export const storeNode2FlowNode = ({
 
   // replace item data
   const nodeItem: FlowNodeItemType = {
+    parentNodeId,
     ...template,
     ...storeNode,
     avatar: template.avatar ?? storeNode.avatar,
     version: storeNode.version ?? template.version ?? defaultNodeVersion,
-
     /* 
       Inputs and outputs, New fields are added, not reduced
     */
@@ -98,6 +115,9 @@ export const storeNode2FlowNode = ({
         return {
           ...storeInput,
           ...templateInput,
+
+          debugLabel: t(templateInput.debugLabel ?? (storeInput.debugLabel as any)),
+          toolDescription: t(templateInput.toolDescription ?? (storeInput.toolDescription as any)),
 
           selectedTypeIndex: storeInput.selectedTypeIndex ?? templateInput.selectedTypeIndex,
           value: storeInput.value ?? templateInput.value,
@@ -126,6 +146,8 @@ export const storeNode2FlowNode = ({
           ...storeOutput,
           ...templateOutput,
 
+          description: t(templateOutput.description ?? (storeOutput.description as any)),
+
           id: storeOutput.id ?? templateOutput.id,
           label: storeOutput.label ?? templateOutput.label,
           value: storeOutput.value ?? templateOutput.value
@@ -143,7 +165,8 @@ export const storeNode2FlowNode = ({
     type: storeNode.flowNodeType,
     data: nodeItem,
     selected,
-    position: storeNode.position || { x: 0, y: 0 }
+    position: storeNode.position || { x: 0, y: 0 },
+    zIndex
   };
 };
 export const storeEdgesRenderEdge = ({ edge }: { edge: StoreEdgeItemType }) => {
@@ -172,10 +195,11 @@ export const computedNodeInputReference = ({
   if (!node) {
     return;
   }
+  const parentId = node.parentNodeId;
   let sourceNodes: FlowNodeItemType[] = [];
   // 根据 edge 获取所有的 source 节点（source节点会继续向前递归获取）
   const findSourceNode = (nodeId: string) => {
-    const targetEdges = edges.filter((item) => item.target === nodeId);
+    const targetEdges = edges.filter((item) => item.target === nodeId || item.target === parentId);
     targetEdges.forEach((edge) => {
       const sourceNode = nodes.find((item) => item.nodeId === edge.source);
       if (!sourceNode) return;
@@ -190,7 +214,7 @@ export const computedNodeInputReference = ({
   };
   findSourceNode(nodeId);
 
-  sourceNodes.unshift(
+  sourceNodes.push(
     getGlobalVariableNode({
       nodes,
       t,
@@ -203,13 +227,11 @@ export const computedNodeInputReference = ({
 export const getRefData = ({
   variable,
   nodeList,
-  chatConfig,
-  t
+  chatConfig
 }: {
-  variable?: ReferenceValueProps;
+  variable?: ReferenceItemValueType;
   nodeList: FlowNodeItemType[];
   chatConfig: AppChatConfigType;
-  t: TFunction;
 }) => {
   if (!variable)
     return {
@@ -218,7 +240,7 @@ export const getRefData = ({
     };
 
   const node = nodeList.find((node) => node.nodeId === variable[0]);
-  const systemVariables = getWorkflowGlobalVariables({ nodes: nodeList, chatConfig, t });
+  const systemVariables = getWorkflowGlobalVariables({ nodes: nodeList, chatConfig });
 
   if (!node) {
     const globalVariable = systemVariables.find((item) => item.key === variable?.[1]);
@@ -241,6 +263,75 @@ export const getRefData = ({
   };
 };
 
+// 根据数据类型，过滤无效的节点输出
+export const filterWorkflowNodeOutputsByType = (
+  outputs: FlowNodeOutputItemType[],
+  valueType: WorkflowIOValueTypeEnum
+): FlowNodeOutputItemType[] => {
+  const validTypeMap: Record<WorkflowIOValueTypeEnum, WorkflowIOValueTypeEnum[]> = {
+    [WorkflowIOValueTypeEnum.string]: [WorkflowIOValueTypeEnum.string],
+    [WorkflowIOValueTypeEnum.number]: [WorkflowIOValueTypeEnum.number],
+    [WorkflowIOValueTypeEnum.boolean]: [WorkflowIOValueTypeEnum.boolean],
+    [WorkflowIOValueTypeEnum.object]: [WorkflowIOValueTypeEnum.object],
+    [WorkflowIOValueTypeEnum.arrayString]: [
+      WorkflowIOValueTypeEnum.string,
+      WorkflowIOValueTypeEnum.arrayString,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.arrayNumber]: [
+      WorkflowIOValueTypeEnum.number,
+      WorkflowIOValueTypeEnum.arrayNumber,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.arrayBoolean]: [
+      WorkflowIOValueTypeEnum.boolean,
+      WorkflowIOValueTypeEnum.arrayBoolean,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.arrayObject]: [
+      WorkflowIOValueTypeEnum.object,
+      WorkflowIOValueTypeEnum.arrayObject,
+      WorkflowIOValueTypeEnum.arrayAny,
+      WorkflowIOValueTypeEnum.chatHistory,
+      WorkflowIOValueTypeEnum.datasetQuote,
+      WorkflowIOValueTypeEnum.dynamic,
+      WorkflowIOValueTypeEnum.selectDataset,
+      WorkflowIOValueTypeEnum.selectApp
+    ],
+    [WorkflowIOValueTypeEnum.chatHistory]: [
+      WorkflowIOValueTypeEnum.chatHistory,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.datasetQuote]: [
+      WorkflowIOValueTypeEnum.datasetQuote,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.dynamic]: [
+      WorkflowIOValueTypeEnum.dynamic,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.selectDataset]: [
+      WorkflowIOValueTypeEnum.selectDataset,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.selectApp]: [
+      WorkflowIOValueTypeEnum.selectApp,
+      WorkflowIOValueTypeEnum.arrayAny
+    ],
+    [WorkflowIOValueTypeEnum.arrayAny]: [WorkflowIOValueTypeEnum.arrayAny],
+    [WorkflowIOValueTypeEnum.any]: [WorkflowIOValueTypeEnum.arrayAny]
+  };
+
+  return outputs.filter(
+    (output) =>
+      valueType === WorkflowIOValueTypeEnum.any ||
+      valueType === WorkflowIOValueTypeEnum.arrayAny ||
+      !output.valueType ||
+      output.valueType === WorkflowIOValueTypeEnum.any ||
+      validTypeMap[valueType].includes(output.valueType)
+  );
+};
+
 /* Connection rules */
 export const checkWorkflowNodeAndConnection = ({
   nodes,
@@ -249,6 +340,7 @@ export const checkWorkflowNodeAndConnection = ({
   nodes: Node<FlowNodeItemType, string | undefined>[];
   edges: Edge<any>[];
 }): string[] | undefined => {
+  const nodeIds: string[] = nodes.map((node) => node.data.nodeId);
   // 1. reference check. Required value
   for (const node of nodes) {
     const data = node.data;
@@ -262,7 +354,8 @@ export const checkWorkflowNodeAndConnection = ({
       data.flowNodeType === FlowNodeTypeEnum.systemConfig ||
       data.flowNodeType === FlowNodeTypeEnum.pluginConfig ||
       data.flowNodeType === FlowNodeTypeEnum.pluginInput ||
-      data.flowNodeType === FlowNodeTypeEnum.workflowStart
+      data.flowNodeType === FlowNodeTypeEnum.workflowStart ||
+      data.flowNodeType === FlowNodeTypeEnum.comment
     ) {
       continue;
     }
@@ -303,27 +396,28 @@ export const checkWorkflowNodeAndConnection = ({
           if (input.value === undefined) return true;
         }
 
+        // Check plugin output
+        // if (
+        //   node.data.flowNodeType === FlowNodeTypeEnum.pluginOutput &&
+        //   (input.value?.length === 0 ||
+        //     (isValidReferenceValue(input.value, nodeIds) && !input.value?.[1]))
+        // ) {
+        //   return true;
+        // }
+
         // check reference invalid
         const renderType = input.renderTypeList[input.selectedTypeIndex || 0];
-        if (renderType === FlowNodeInputTypeEnum.reference && input.required) {
-          if (!input.value || !Array.isArray(input.value) || input.value.length !== 2) {
-            return true;
+        if (renderType === FlowNodeInputTypeEnum.reference) {
+          if (input.valueType?.startsWith('array')) {
+            if (input.required && (!input.value || input.value.length === 0)) {
+              return true;
+            }
+
+            return !isValidArrayReferenceValue(input.value, nodeIds);
           }
 
-          // variable key not need to check
-          if (input.value[0] === VARIABLE_NODE_ID) {
-            return false;
-          }
-
-          // Can not find key
-          const sourceNode = nodes.find((item) => item.data.nodeId === input.value[0]);
-          if (!sourceNode) {
-            return true;
-          }
-          const sourceOutput = sourceNode.data.outputs.find((item) => item.id === input.value[1]);
-          if (!sourceOutput) {
-            return true;
-          }
+          // Single reference
+          return input.required && !isValidReferenceValue(input.value, nodeIds);
         }
         return false;
       })
@@ -331,8 +425,16 @@ export const checkWorkflowNodeAndConnection = ({
       return [data.nodeId];
     }
 
-    // check empty node(not edge)
-    const hasEdge = edges.some(
+    // filter tools node edge
+    const edgeFilted = edges.filter(
+      (edge) =>
+        !(
+          data.flowNodeType === FlowNodeTypeEnum.tools &&
+          edge.sourceHandle === NodeOutputKeyEnum.selectedTools
+        )
+    );
+    // check node has edge
+    const hasEdge = edgeFilted.some(
       (edge) => edge.source === data.nodeId || edge.target === data.nodeId
     );
     if (!hasEdge) {
@@ -362,12 +464,10 @@ export const filterSensitiveNodesData = (nodes: StoreNodeItemType[]) => {
 /* get workflowStart output to global variables */
 export const getWorkflowGlobalVariables = ({
   nodes,
-  chatConfig,
-  t
+  chatConfig
 }: {
   nodes: FlowNodeItemType[];
   chatConfig: AppChatConfigType;
-  t: TFunction;
 }): EditorVariablePickerType[] => {
   const globalVariables = formatEditorVariablePickerIcon(
     getAppChatConfig({
@@ -377,9 +477,7 @@ export const getWorkflowGlobalVariables = ({
     })?.variables || []
   );
 
-  const systemVariables = getSystemVariables(t);
-
-  return [...globalVariables, ...systemVariables];
+  return [...globalVariables, ...workflowSystemVariables];
 };
 
 export type CombinedItemType = Partial<FlowNodeInputItemType> & Partial<FlowNodeOutputItemType>;
@@ -423,104 +521,16 @@ export const getLatestNodeTemplate = (
   return updatedNode;
 };
 
-type WorkflowType = {
-  nodes: StoreNodeItemType[];
-  edges: StoreEdgeItemType[];
-  chatConfig: AppChatConfigType;
-};
-export const compareWorkflow = (workflow1: WorkflowType, workflow2: WorkflowType) => {
-  const clone1 = cloneDeep(workflow1);
-  const clone2 = cloneDeep(workflow2);
-
-  if (!isEqual(clone1.edges, clone2.edges)) {
-    console.log('Edge not equal');
-    return false;
-  }
-
-  if (
-    clone1.chatConfig &&
-    clone2.chatConfig &&
-    !isEqual(
-      {
-        welcomeText: clone1.chatConfig?.welcomeText || '',
-        variables: clone1.chatConfig?.variables || [],
-        questionGuide: clone1.chatConfig?.questionGuide || false,
-        ttsConfig: clone1.chatConfig?.ttsConfig || undefined,
-        whisperConfig: clone1.chatConfig?.whisperConfig || undefined,
-        scheduledTriggerConfig: clone1.chatConfig?.scheduledTriggerConfig || undefined,
-        chatInputGuide: clone1.chatConfig?.chatInputGuide || undefined,
-        fileSelectConfig: clone1.chatConfig?.fileSelectConfig || undefined
-      },
-      {
-        welcomeText: clone2.chatConfig?.welcomeText || '',
-        variables: clone2.chatConfig?.variables || [],
-        questionGuide: clone2.chatConfig?.questionGuide || false,
-        ttsConfig: clone2.chatConfig?.ttsConfig || undefined,
-        whisperConfig: clone2.chatConfig?.whisperConfig || undefined,
-        scheduledTriggerConfig: clone2.chatConfig?.scheduledTriggerConfig || undefined,
-        chatInputGuide: clone2.chatConfig?.chatInputGuide || undefined,
-        fileSelectConfig: clone2.chatConfig?.fileSelectConfig || undefined
-      }
-    )
-  ) {
-    console.log('chatConfig not equal');
-    return false;
-  }
-
-  const formatNodes = (nodes: StoreNodeItemType[]) => {
-    return nodes
-      .filter((node) => {
-        if (!node) return;
-        if ([FlowNodeTypeEnum.systemConfig].includes(node.flowNodeType)) return;
-
-        return true;
-      })
-      .map((node) => ({
-        flowNodeType: node.flowNodeType,
-        inputs: node.inputs.map((input) => ({
-          key: input.key,
-          selectedTypeIndex: input.selectedTypeIndex ?? 0,
-          renderTypeLis: input.renderTypeList,
-          valueType: input.valueType,
-          value: input.value ?? undefined
-        })),
-        outputs: node.outputs.map((item) => ({
-          key: item.key,
-          type: item.type,
-          value: item.value ?? undefined
-        })),
-        name: node.name,
-        intro: node.intro,
-        avatar: node.avatar,
-        version: node.version,
-        position: node.position
-      }));
-  };
-  const node1 = formatNodes(clone1.nodes);
-  const node2 = formatNodes(clone2.nodes);
-
-  // console.log(node1);
-  // console.log(node2);
-
-  node1.forEach((node, i) => {
-    if (!isEqual(node, node2[i])) {
-      console.log('node not equal');
-    }
-  });
-
-  return isEqual(node1, node2);
-};
-
 export const compareSnapshot = (
   snapshot1: {
-    nodes: Node<FlowNodeItemType, string | undefined>[] | undefined;
+    nodes?: Node[];
     edges: Edge<any>[] | undefined;
-    chatConfig: AppChatConfigType | undefined;
+    chatConfig?: AppChatConfigType;
   },
   snapshot2: {
-    nodes: Node<FlowNodeItemType, string | undefined>[];
+    nodes?: Node[];
     edges: Edge<any>[];
-    chatConfig: AppChatConfigType;
+    chatConfig?: AppChatConfigType;
   }
 ) => {
   const clone1 = cloneDeep(snapshot1);
@@ -605,7 +615,8 @@ export const compareSnapshot = (
           name: node.data.name,
           intro: node.data.intro,
           avatar: node.data.avatar,
-          version: node.data.version
+          version: node.data.version,
+          isFolded: node.data.isFolded
         }
       }));
   };
@@ -619,4 +630,14 @@ export const compareSnapshot = (
   });
 
   return isEqual(node1, node2);
+};
+
+// remove node size
+export const simplifyWorkflowNodes = (nodes: Node[]) => {
+  return nodes.map((node) => ({
+    id: node.id,
+    type: node.type,
+    position: node.position,
+    data: node.data
+  }));
 };

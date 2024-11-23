@@ -1,6 +1,7 @@
 import { Permission } from '@fastgpt/global/support/permission/controller';
 import { ApiRequestProps } from '../../type/next';
 import type { PermissionValueType } from '@fastgpt/global/support/permission/type';
+import { RequireAtLeastOne } from '@fastgpt/global/common/type/utils';
 
 export type ReqHeaderAuthType = {
   cookie?: string;
@@ -10,11 +11,6 @@ export type ReqHeaderAuthType = {
   userid?: string;
   authorization?: string;
 };
-
-type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Omit<T, Keys> &
-  {
-    [K in Keys]-?: Required<Pick<T, K>> & Partial<Omit<T, K>>;
-  }[Keys];
 
 type authModeType = {
   req: ApiRequestProps;
@@ -32,5 +28,6 @@ export type AuthResponseType<T extends Permission = Permission> = {
   authType?: `${AuthUserTypeEnum}`;
   appId?: string;
   apikey?: string;
+  isRoot: boolean;
   permission: T;
 };

@@ -13,6 +13,7 @@ import { serviceSideProps } from '@/web/common/utils/i18n';
 import { useTranslation } from 'next-i18next';
 import Script from 'next/script';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import { getWebReqUrl } from '@fastgpt/web/common/system/utils';
 
 const Promotion = dynamic(() => import('./components/Promotion'));
 const UsageTable = dynamic(() => import('./components/UsageTable'));
@@ -40,39 +41,37 @@ const Account = ({ currentTab }: { currentTab: TabEnum }) => {
   const tabList = [
     {
       icon: 'support/user/userLight',
-      label: t('common:user.Personal Information'),
+      label: t('user:personal_information'),
       value: TabEnum.info
     },
     ...(feConfigs?.isPlus
       ? [
           {
             icon: 'support/usage/usageRecordLight',
-            label: t('common:user.Usage Record'),
+            label: t('user:usage_record'),
             value: TabEnum.usage
           }
         ]
       : []),
-    // ...(feConfigs?.show_pay && userInfo?.team?.permission.hasWritePer
-    ...(feConfigs?.show_pay || userInfo?.team?.permission.hasWritePer
+    ...(feConfigs?.show_pay && userInfo?.team?.permission.hasManagePer
       ? [
           {
             icon: 'support/bill/payRecordLight',
-            label: t('common:support.wallet.Bills'),
+            label: t('user:bill_and_invoices'),
             value: TabEnum.bill
           }
         ]
       : []),
-
-    ...(feConfigs?.show_promotion
+    ...(feConfigs?.show_promotion && userInfo?.team?.permission.isOwner
       ? [
           {
             icon: 'support/account/promotionLight',
-            label: t('common:user.Promotion Record'),
+            label: t('user:promotion_records'),
             value: TabEnum.promotion
           }
         ]
       : []),
-    ...(userInfo?.team?.permission.hasWritePer
+    ...(userInfo?.team?.permission.hasManagePer
       ? [
           {
             icon: 'support/outlink/apikeyLight',
@@ -83,14 +82,14 @@ const Account = ({ currentTab }: { currentTab: TabEnum }) => {
       : []),
     {
       icon: 'support/user/individuation',
-      label: t('common:support.account.Individuation'),
+      label: t('user:personalization'),
       value: TabEnum.individuation
     },
     ...(feConfigs.isPlus
       ? [
           {
             icon: 'support/user/informLight',
-            label: t('common:user.Notice'),
+            label: t('user:notice'),
             value: TabEnum.inform
           }
         ]
@@ -98,7 +97,7 @@ const Account = ({ currentTab }: { currentTab: TabEnum }) => {
 
     {
       icon: 'support/account/loginoutLight',
-      label: t('common:user.Sign Out'),
+      label: t('user:sign_out'),
       value: TabEnum.loginout
     }
   ];
@@ -130,7 +129,7 @@ const Account = ({ currentTab }: { currentTab: TabEnum }) => {
 
   return (
     <>
-      <Script src="/js/qrcode.min.js" strategy="lazyOnload"></Script>
+      <Script src={getWebReqUrl('/js/qrcode.min.js')} strategy="lazyOnload"></Script>
       <PageContainer>
         <Flex flexDirection={['column', 'row']} h={'100%'} pt={[4, 0]}>
           {isPc ? (

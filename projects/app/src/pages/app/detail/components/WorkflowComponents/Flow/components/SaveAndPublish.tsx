@@ -3,7 +3,8 @@ import { formatTime2YMDHMS } from '@fastgpt/global/common/string/time';
 import MyModal from '@fastgpt/web/components/common/MyModal';
 import { useToast } from '@fastgpt/web/hooks/useToast';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from 'next-i18next';
+
 type FormType = {
   versionName: string;
   isPublish: boolean | undefined;
@@ -19,7 +20,12 @@ const SaveAndPublishModal = ({
   onClickSave: (data: { isPublish: boolean; versionName: string }) => Promise<void>;
 }) => {
   const { t } = useTranslation();
-  const { toast } = useToast();
+  const { toast } = useToast({
+    containerStyle: {
+      mt: '60px',
+      fontSize: 'sm'
+    }
+  });
   const { register, handleSubmit } = useForm<FormType>({
     defaultValues: {
       versionName: formatTime2YMDHMS(new Date()),
@@ -66,7 +72,9 @@ const SaveAndPublishModal = ({
             await onClickSave({ ...data, isPublish: true });
             toast({
               status: 'success',
-              title: t('app:publish_success')
+              title: t('app:publish_success'),
+              position: 'top-right',
+              isClosable: true
             });
             onClose();
           })}

@@ -31,6 +31,7 @@ export const ClassifyQuestionModule: FlowNodeTemplateType = {
   intro: i18nT('workflow:intro_question_classification'),
   showStatus: true,
   version: '481',
+  courseUrl: '/docs/guide/workbench/workflow/question_classify/',
   inputs: [
     {
       ...Input_Template_SelectAIModel,
@@ -51,15 +52,15 @@ export const ClassifyQuestionModule: FlowNodeTemplateType = {
       label: '',
       value: [
         {
-          value: i18nT('workflow:greeting'),
+          value: 'Greeting',
           key: 'wqre'
         },
         {
-          value: i18nT('workflow:about_xxx_question'),
+          value: 'Question regarding xxx',
           key: 'sdfa'
         },
         {
-          value: i18nT('workflow:other_questions'),
+          value: 'Other Questions',
           key: 'agex'
         }
       ]

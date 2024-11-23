@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Box, Flex, Button, IconButton, Input, Textarea, HStack } from '@chakra-ui/react';
-import { DeleteIcon } from '@chakra-ui/icons';
+import React, { useMemo } from 'react';
+import { Box, Flex, Button } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import { getDatasetCollectionById } from '@/web/core/dataset/api';
@@ -19,7 +18,10 @@ const MetaDataCard = ({ datasetId }: { datasetId: string }) => {
     collectionId: string;
     datasetId: string;
   };
-  const readSource = getCollectionSourceAndOpen(collectionId);
+
+  const readSource = getCollectionSourceAndOpen({
+    collectionId
+  });
   const { data: collection, loading: isLoading } = useRequest2(
     () => getDatasetCollectionById(collectionId),
     {
@@ -33,7 +35,7 @@ const MetaDataCard = ({ datasetId }: { datasetId: string }) => {
       manual: false
     }
   );
-  const metadataList = useMemo(() => {
+  const metadataList = useMemo<{ label?: string; value?: any }[]>(() => {
     if (!collection) return [];
 
     const webSelector =

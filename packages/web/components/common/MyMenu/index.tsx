@@ -23,7 +23,7 @@ export type Props = {
   trigger?: 'hover' | 'click';
   iconSize?: string;
   iconRadius?: string;
-  menuItemStyles?: MenuItemProps;
+
   placement?: PlacementWithLogical;
   menuList: {
     label?: string;
@@ -33,7 +33,8 @@ export type Props = {
       icon?: IconNameType | string;
       label: string | React.ReactNode;
       description?: string;
-      onClick: () => any;
+      onClick?: () => any;
+      menuItemStyles?: MenuItemProps;
     }[];
   }[];
 };
@@ -46,15 +47,7 @@ const MyMenu = ({
   Button,
   menuList,
   iconRadius,
-  placement = 'bottom-start',
-  menuItemStyles = {
-    borderRadius: 'sm',
-    py: 2,
-    px: 3,
-    display: 'flex',
-    alignItems: 'center',
-    fontSize: 'sm'
-  }
+  placement = 'bottom-start'
 }: Props) => {
   const typeMapStyle: Record<MenuItemType, MenuItemProps> = {
     primary: {
@@ -150,10 +143,19 @@ const MyMenu = ({
             bottom={0}
             left={0}
           />
-          <Box position={'relative'}>{Button}</Box>
+          <Box
+            position={'relative'}
+            color={isOpen ? 'primary.600' : ''}
+            w="fit-content"
+            h="fit-content"
+            borderRadius="sm"
+          >
+            {Button}
+          </Box>
         </Box>
         <MenuList
           minW={isOpen ? `${width}px !important` : '80px'}
+          zIndex={100}
           maxW={'300px'}
           p={'6px'}
           border={'1px solid #fff'}
@@ -167,16 +169,23 @@ const MyMenu = ({
                 {item.children.map((child, index) => (
                   <MenuItem
                     key={index}
-                    {...menuItemStyles}
+                    borderRadius={'sm'}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setIsOpen(false);
-                      child.onClick && child.onClick();
+                      if (child.onClick) {
+                        setIsOpen(false);
+                        child.onClick();
+                      }
                     }}
+                    py={2}
+                    px={3}
+                    alignItems={'center'}
+                    fontSize={'sm'}
                     color={child.isActive ? 'primary.700' : 'myGray.600'}
                     whiteSpace={'pre-wrap'}
                     _notLast={{ mb: 0.5 }}
                     {...typeMapStyle[child.type || 'primary']}
+                    {...child.menuItemStyles}
                   >
                     {!!child.icon && (
                       <Avatar

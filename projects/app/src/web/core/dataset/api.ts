@@ -42,14 +42,20 @@ import type {
   PostPreviewFilesChunksProps,
   PreviewChunksResponse
 } from '@/pages/api/core/dataset/file/getPreviewChunks';
-import type { readCollectionSourceResponse } from '@/pages/api/core/dataset/collection/read';
+import type {
+  readCollectionSourceBody,
+  readCollectionSourceResponse
+} from '@/pages/api/core/dataset/collection/read';
 import type { GetDatasetListBody } from '@/pages/api/core/dataset/list';
 import type { UpdateDatasetCollectionParams } from '@/pages/api/core/dataset/collection/update';
-import type { GetDatasetDataListProps } from '@/pages/api/core/dataset/data/list';
+import type {
+  GetDatasetDataListProps,
+  GetDatasetDataListRes
+} from '@/pages/api/core/dataset/data/v2/list';
 import type { UpdateDatasetDataProps } from '@fastgpt/global/core/dataset/controller';
 import type { DatasetFolderCreateBody } from '@/pages/api/core/dataset/folder/create';
-import { PaginationProps, PaginationResponse } from '@fastgpt/web/common/fetch/type';
-import { GetScrollCollectionsProps } from '@/pages/api/core/dataset/collection/scrollList';
+import type { PaginationProps, PaginationResponse } from '@fastgpt/web/common/fetch/type';
+import type { GetScrollCollectionsProps } from '@/pages/api/core/dataset/collection/scrollList';
 
 /* ======================== dataset ======================= */
 export const getDatasets = (data: GetDatasetListBody) =>
@@ -139,13 +145,13 @@ export const getDatasetCollectionTags = (
     datasetId: string;
     searchText?: string;
   }>
-) => GET<PaginationResponse<DatasetTagType>>(`/proApi/core/dataset/tag/list`, data);
+) => POST<PaginationResponse<DatasetTagType>>(`/proApi/core/dataset/tag/list`, data);
 export const getTagUsage = (datasetId: string) =>
   GET<TagUsageType[]>(`/proApi/core/dataset/tag/tagUsage?datasetId=${datasetId}`);
 export const getAllTags = (datasetId: string) =>
   GET<{ list: DatasetTagType[] }>(`/proApi/core/dataset/tag/getAllTags?datasetId=${datasetId}`);
 export const getScrollCollectionList = (data: GetScrollCollectionsProps) =>
-  GET<PaginationResponse<DatasetCollectionsListItemType>>(
+  POST<PaginationResponse<DatasetCollectionsListItemType>>(
     `/core/dataset/collection/scrollList`,
     data
   );
@@ -153,7 +159,7 @@ export const getScrollCollectionList = (data: GetScrollCollectionsProps) =>
 /* =============================== data ==================================== */
 /* get dataset list */
 export const getDatasetDataList = (data: GetDatasetDataListProps) =>
-  POST(`/core/dataset/data/list`, data);
+  POST<GetDatasetDataListRes>(`/core/dataset/data/v2/list`, data);
 
 export const getDatasetDataItemById = (id: string) =>
   GET<DatasetDataItemType>(`/core/dataset/data/detail`, { id });
@@ -191,5 +197,5 @@ export const getPreviewChunks = (data: PostPreviewFilesChunksProps) =>
   POST<PreviewChunksResponse>('/core/dataset/file/getPreviewChunks', data);
 
 /* ================== read source ======================== */
-export const getCollectionSource = (collectionId: string) =>
-  GET<readCollectionSourceResponse>('/core/dataset/collection/read', { collectionId });
+export const getCollectionSource = (data: readCollectionSourceBody) =>
+  POST<readCollectionSourceResponse>('/core/dataset/collection/read', data);

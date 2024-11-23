@@ -8,7 +8,8 @@ import {
   WorkflowIOValueTypeEnum,
   NodeInputKeyEnum,
   NodeOutputKeyEnum,
-  FlowNodeTemplateTypeEnum
+  FlowNodeTemplateTypeEnum,
+  ContentTypes
 } from '../../constants';
 import { Input_Template_DynamicInput } from '../input';
 import { Output_Template_AddOutput } from '../output';
@@ -26,6 +27,7 @@ export const HttpNode468: FlowNodeTemplateType = {
   intro: i18nT('workflow:intro_http_request'),
   showStatus: true,
   isTool: true,
+  courseUrl: '/docs/guide/workbench/workflow/http/',
   version: '481',
   inputs: [
     {
@@ -82,6 +84,7 @@ export const HttpNode468: FlowNodeTemplateType = {
       label: '',
       required: false
     },
+    // json body data
     {
       key: NodeInputKeyEnum.httpJsonBody,
       renderTypeList: [FlowNodeInputTypeEnum.hidden],
@@ -89,11 +92,31 @@ export const HttpNode468: FlowNodeTemplateType = {
       value: '',
       label: '',
       required: false
+    },
+    // form body data
+    {
+      key: NodeInputKeyEnum.httpFormBody,
+      renderTypeList: [FlowNodeInputTypeEnum.hidden],
+      valueType: WorkflowIOValueTypeEnum.any,
+      value: [],
+      label: '',
+      required: false
+    },
+    // body data type
+    {
+      key: NodeInputKeyEnum.httpContentType,
+      renderTypeList: [FlowNodeInputTypeEnum.hidden],
+      valueType: WorkflowIOValueTypeEnum.string,
+      value: ContentTypes.json,
+      label: '',
+      required: false
     }
   ],
   outputs: [
     {
-      ...Output_Template_AddOutput
+      ...Output_Template_AddOutput,
+      label: i18nT('workflow:http_extract_output'),
+      description: i18nT('workflow:http_extract_output_description')
     },
     {
       id: NodeOutputKeyEnum.error,

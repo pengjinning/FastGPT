@@ -4,12 +4,8 @@ import type { ChatItemType, UserChatItemValueItemType } from '@fastgpt/global/co
 import { ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
 import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import { textAdaptGptResponse } from '@fastgpt/global/core/workflow/runtime/utils';
-import { getAIApi } from '../../../ai/config';
-import type {
-  ChatCompletion,
-  ChatCompletionMessageParam,
-  StreamChatType
-} from '@fastgpt/global/core/ai/type.d';
+import { createChatCompletion } from '../../../ai/config';
+import type { ChatCompletion, StreamChatType } from '@fastgpt/global/core/ai/type.d';
 import { formatModelChars2Points } from '../../../../support/wallet/usage/utils';
 import type { LLMModelItemType } from '@fastgpt/global/core/ai/model.d';
 import { postTextCensor } from '../../../../common/api/requestPlusApi';
@@ -19,14 +15,15 @@ import { countMessagesTokens } from '../../../../common/string/tiktoken/index';
 import {
   chats2GPTMessages,
   chatValue2RuntimePrompt,
-  getSystemPrompt,
+  getSystemPrompt_ChatItemType,
   GPTMessages2Chats,
   runtimePrompt2ChatsValue
 } from '@fastgpt/global/core/chat/adapt';
 import {
   Prompt_DocumentQuote,
-  Prompt_QuotePromptList,
-  Prompt_QuoteTemplateList
+  Prompt_userQuotePromptList,
+  Prompt_QuoteTemplateList,
+  Prompt_systemQuotePromptList
 } from '@fastgpt/global/core/ai/prompt/AIChat';
 import type { AIChatNodeProps } from '@fastgpt/global/core/workflow/runtime/type.d';
 import { replaceVariable } from '@fastgpt/global/common/string/tools';
@@ -40,8 +37,14 @@ import { getHistories } from '../utils';
 import { filterSearchResultsByMaxChars } from '../../utils';
 import { getHistoryPreview } from '@fastgpt/global/core/chat/utils';
 import { addLog } from '../../../../common/system/log';
-import { computedMaxToken, computedTemperature } from '../../../ai/utils';
+import { computedMaxToken, llmCompletionsBodyFormat } from '../../../ai/utils';
 import { WorkflowResponseType } from '../type';
+import { formatTime2YMDHM } from '@fastgpt/global/common/string/time';
+import { AiChatQuoteRoleType } from '@fastgpt/global/core/workflow/template/system/aiChat/type';
+import { getErrText } from '@fastgpt/global/common/error/utils';
+import { getFileContentFromLinks, getHistoryFileLinks } from '../tools/readFiles';
+import { parseUrlToFileType } from '@fastgpt/global/common/file/tools';
+import { i18nT } from '../../../../../web/i18n/utils';
 
 export type ChatProps = ModuleDispatchProps<
   AIChatNodeProps & {
@@ -65,7 +68,9 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
     histories,
     node: { name },
     query,
+    runningAppInfo: { teamId },
     workflowStreamResponse,
+    chatConfig,
     params: {
       model,
       temperature = 0,
@@ -75,17 +80,16 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
       userChatInput,
       isResponseAnswerText = true,
       systemPrompt = '',
+      aiChatQuoteRole = 'system',
       quoteTemplate,
       quotePrompt,
       aiChatVision,
-      stringQuoteText
+      fileUrlList: fileLinks, // node quote file links
+      stringQuoteText //abandon
     }
   } = props;
-  const { files: inputFiles } = chatValue2RuntimePrompt(query);
+  const { files: inputFiles } = chatValue2RuntimePrompt(query); // Chat box input files
 
-  if (!userChatInput && inputFiles.length === 0) {
-    return Promise.reject('Question is empty');
-  }
   stream = stream && isResponseAnswerText;
 
   const chatHistories = getHistories(history, histories);
@@ -95,11 +99,26 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
     return Promise.reject('The chat model is undefined, you need to select a chat model.');
   }
 
-  const { datasetQuoteText } = await filterDatasetQuote({
-    quoteQA,
-    model: modelConstantsData,
-    quoteTemplate
-  });
+  const [{ datasetQuoteText }, { documentQuoteText, userFiles }] = await Promise.all([
+    filterDatasetQuote({
+      quoteQA,
+      model: modelConstantsData,
+      quoteTemplate
+    }),
+    getMultiInput({
+      histories: chatHistories,
+      inputFiles,
+      fileLinks,
+      stringQuoteText,
+      requestOrigin,
+      maxFiles: chatConfig?.fileSelectConfig?.maxFiles || 20,
+      teamId
+    })
+  ]);
+
+  if (!userChatInput && !documentQuoteText && userFiles.length === 0) {
+    return Promise.reject(i18nT('chat:AI_input_is_empty'));
+  }
 
   const [{ filterMessages }] = await Promise.all([
     getChatMessages({
@@ -107,18 +126,18 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
       histories: chatHistories,
       useDatasetQuote: quoteQA !== undefined,
       datasetQuoteText,
+      aiChatQuoteRole,
       datasetQuotePrompt: quotePrompt,
       userChatInput,
-      inputFiles,
       systemPrompt,
-      stringQuoteText
+      userFiles,
+      documentQuoteText
     }),
     (() => {
       // censor model and system key
       if (modelConstantsData.censor && !user.openaiAccount?.key) {
         return postTextCensor({
           text: `${systemPrompt}
-            ${datasetQuoteText}
             ${userChatInput}
           `
         });
@@ -126,22 +145,9 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
     })()
   ]);
 
-  // Get the request messages
-  const concatMessages = [
-    ...(modelConstantsData.defaultSystemChatPrompt
-      ? [
-          {
-            role: ChatCompletionRequestMessageRoleEnum.System,
-            content: modelConstantsData.defaultSystemChatPrompt
-          }
-        ]
-      : []),
-    ...filterMessages
-  ] as ChatCompletionMessageParam[];
-
   const [requestMessages, max_tokens] = await Promise.all([
     loadRequestMessages({
-      messages: concatMessages,
+      messages: filterMessages,
       useVision: modelConstantsData.vision && aiChatVision,
       origin: requestOrigin
     }),
@@ -152,31 +158,30 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
     })
   ]);
 
-  const requestBody = {
-    ...modelConstantsData?.defaultConfig,
-    model: modelConstantsData.model,
-    temperature: computedTemperature({
-      model: modelConstantsData,
-      temperature
-    }),
-    max_tokens,
-    stream,
-    messages: requestMessages
-  };
+  const requestBody = llmCompletionsBodyFormat(
+    {
+      model: modelConstantsData.model,
+      temperature,
+      max_tokens,
+      stream,
+      messages: requestMessages
+    },
+    modelConstantsData
+  );
   // console.log(JSON.stringify(requestBody, null, 2), '===');
   try {
-    const ai = getAIApi({
+    const { response, isStreamResponse } = await createChatCompletion({
+      body: requestBody,
       userKey: user.openaiAccount,
-      timeout: 480000
-    });
-    const response = await ai.chat.completions.create(requestBody, {
-      headers: {
-        Accept: 'application/json, text/plain, */*'
+      options: {
+        headers: {
+          Accept: 'application/json, text/plain, */*'
+        }
       }
     });
 
     const { answerText } = await (async () => {
-      if (res && stream) {
+      if (res && isStreamResponse) {
         // sse response
         const { answer } = await streamResponse({
           res,
@@ -185,7 +190,7 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
         });
 
         if (!answer) {
-          throw new Error('LLM model response empty');
+          return Promise.reject(i18nT('chat:LLM_model_response_empty'));
         }
 
         return {
@@ -194,6 +199,16 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
       } else {
         const unStreamResponse = response as ChatCompletion;
         const answer = unStreamResponse.choices?.[0]?.message?.content || '';
+
+        if (stream) {
+          // Some models do not support streaming
+          workflowStreamResponse?.({
+            event: SseResponseEventEnum.fastAnswer,
+            data: textAdaptGptResponse({
+              text: answer
+            })
+          });
+        }
 
         return {
           answerText: answer
@@ -222,7 +237,11 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
         tokens,
         query: `${userChatInput}`,
         maxToken: max_tokens,
-        historyPreview: getHistoryPreview(chatCompleteMessages, 10000),
+        historyPreview: getHistoryPreview(
+          chatCompleteMessages,
+          10000,
+          modelConstantsData.vision && aiChatVision
+        ),
         contextTotalLen: completeMessages.length
       },
       [DispatchNodeResponseKeyEnum.nodeDispatchUsages]: [
@@ -237,13 +256,8 @@ export const dispatchChatCompletion = async (props: ChatProps): Promise<ChatResp
       history: chatCompleteMessages
     };
   } catch (error) {
-    addLog.warn(`LLM response error`, {
-      baseUrl: user.openaiAccount?.baseUrl,
-      requestBody
-    });
-
     if (user.openaiAccount?.baseUrl) {
-      return Promise.reject(`您的 OpenAI key 出错了: ${JSON.stringify(requestBody)}`);
+      return Promise.reject(`您的 OpenAI key 出错了: ${getErrText(error)}`);
     }
 
     return Promise.reject(error);
@@ -263,6 +277,7 @@ async function filterDatasetQuote({
     return replaceVariable(quoteTemplate || Prompt_QuoteTemplateList[0].value, {
       q: item.q,
       a: item.a,
+      updateTime: formatTime2YMDHM(item.updateTime),
       source: item.sourceName,
       sourceId: String(item.sourceId || 'UnKnow'),
       index: index + 1
@@ -281,52 +296,145 @@ async function filterDatasetQuote({
     datasetQuoteText
   };
 }
+
+async function getMultiInput({
+  histories,
+  inputFiles,
+  fileLinks,
+  stringQuoteText,
+  requestOrigin,
+  maxFiles,
+  teamId
+}: {
+  histories: ChatItemType[];
+  inputFiles: UserChatItemValueItemType['file'][];
+  fileLinks?: string[];
+  stringQuoteText?: string; // file quote
+  requestOrigin?: string;
+  maxFiles: number;
+  teamId: string;
+}) {
+  // 旧版本适配====>
+  if (stringQuoteText) {
+    return {
+      documentQuoteText: stringQuoteText,
+      userFiles: inputFiles
+    };
+  }
+
+  // 没有引用文件参考，但是可能用了图片识别
+  if (!fileLinks) {
+    return {
+      documentQuoteText: '',
+      userFiles: inputFiles
+    };
+  }
+  // 旧版本适配<====
+
+  // If fileLinks params is not empty, it means it is a new version, not get the global file.
+
+  // Get files from histories
+  const filesFromHistories = getHistoryFileLinks(histories);
+  const urls = [...fileLinks, ...filesFromHistories];
+
+  if (urls.length === 0) {
+    return {
+      documentQuoteText: '',
+      userFiles: []
+    };
+  }
+
+  const { text } = await getFileContentFromLinks({
+    // Concat fileUrlList and filesFromHistories; remove not supported files
+    urls,
+    requestOrigin,
+    maxFiles,
+    teamId
+  });
+
+  return {
+    documentQuoteText: text,
+    userFiles: fileLinks.map((url) => parseUrlToFileType(url))
+  };
+}
+
 async function getChatMessages({
-  datasetQuotePrompt,
+  model,
+  aiChatQuoteRole,
+  datasetQuotePrompt = '',
   datasetQuoteText,
   useDatasetQuote,
   histories = [],
   systemPrompt,
   userChatInput,
-  inputFiles,
-  model,
-  stringQuoteText
+  userFiles,
+  documentQuoteText
 }: {
+  model: LLMModelItemType;
+  // dataset quote
+  aiChatQuoteRole: AiChatQuoteRoleType; // user: replace user prompt; system: replace system prompt
   datasetQuotePrompt?: string;
   datasetQuoteText: string;
+
   useDatasetQuote: boolean;
   histories: ChatItemType[];
   systemPrompt: string;
   userChatInput: string;
-  inputFiles: UserChatItemValueItemType['file'][];
-  model: LLMModelItemType;
-  stringQuoteText?: string;
+
+  userFiles: UserChatItemValueItemType['file'][];
+  documentQuoteText?: string; // document quote
 }) {
-  const replaceInputValue = useDatasetQuote
-    ? replaceVariable(datasetQuotePrompt || Prompt_QuotePromptList[0].value, {
-        quote: datasetQuoteText,
-        question: userChatInput
-      })
-    : userChatInput;
+  // Dataset prompt ====>
+  // User role or prompt include question
+  const quoteRole =
+    aiChatQuoteRole === 'user' || datasetQuotePrompt.includes('{{question}}') ? 'user' : 'system';
+
+  const datasetQuotePromptTemplate = datasetQuotePrompt
+    ? datasetQuotePrompt
+    : quoteRole === 'user'
+      ? Prompt_userQuotePromptList[0].value
+      : Prompt_systemQuotePromptList[0].value;
+
+  // Reset user input, add dataset quote to user input
+  const replaceInputValue =
+    useDatasetQuote && quoteRole === 'user'
+      ? replaceVariable(datasetQuotePromptTemplate, {
+          quote: datasetQuoteText,
+          question: userChatInput
+        })
+      : userChatInput;
+  // Dataset prompt <====
+
+  // Concat system prompt
+  const concatenateSystemPrompt = [
+    model.defaultSystemChatPrompt,
+    systemPrompt,
+    useDatasetQuote && quoteRole === 'system'
+      ? replaceVariable(datasetQuotePromptTemplate, {
+          quote: datasetQuoteText
+        })
+      : '',
+    documentQuoteText
+      ? replaceVariable(Prompt_DocumentQuote, {
+          quote: documentQuoteText
+        })
+      : ''
+  ]
+    .filter(Boolean)
+    .join('\n\n===---===---===\n\n');
 
   const messages: ChatItemType[] = [
-    ...getSystemPrompt(systemPrompt),
-    ...(stringQuoteText
-      ? getSystemPrompt(
-          replaceVariable(Prompt_DocumentQuote, {
-            quote: stringQuoteText
-          })
-        )
-      : []),
+    ...getSystemPrompt_ChatItemType(concatenateSystemPrompt),
     ...histories,
     {
       obj: ChatRoleEnum.Human,
       value: runtimePrompt2ChatsValue({
-        files: inputFiles,
+        files: userFiles,
         text: replaceInputValue
       })
     }
   ];
+
   const adaptMessages = chats2GPTMessages({ messages, reserveId: false });
 
   const filterMessages = await filterGPTMessageByMaxTokens({

@@ -6,7 +6,7 @@ import {
   countGptMessagesTokens
 } from '../../../../common/string/tiktoken/index';
 import { ChatItemValueTypeEnum, ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
-import { getAIApi } from '../../../ai/config';
+import { createChatCompletion } from '../../../ai/config';
 import type { ContextExtractAgentItemType } from '@fastgpt/global/core/workflow/template/system/contextExtract/type';
 import { NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
@@ -26,6 +26,7 @@ import {
 import { ChatCompletionRequestMessageRoleEnum } from '@fastgpt/global/core/ai/constants';
 import { DispatchNodeResultType } from '@fastgpt/global/core/workflow/runtime/type';
 import { chatValue2RuntimePrompt } from '@fastgpt/global/core/chat/adapt';
+import { llmCompletionsBodyFormat } from '../../../ai/utils';
 
 type Props = ModuleDispatchProps<{
   [NodeInputKeyEnum.history]?: ChatItemType[];
@@ -161,7 +162,7 @@ ${description ? `- ${description}` : ''}
 - 需要结合前面的对话内容，一起生成合适的参数。
 """
 
-本次输入内容: ${content}
+本次输入内容: """${content}"""
             `
           }
         }
@@ -221,23 +222,24 @@ const toolChoice = async (props: ActionProps) => {
     }
   ];
 
-  const ai = getAIApi({
-    userKey: user.openaiAccount,
-    timeout: 480000
-  });
-
-  const response = await ai.chat.completions.create({
-    model: extractModel.model,
-    temperature: 0.01,
-    messages: filterMessages,
-    tools,
-    tool_choice: { type: 'function', function: { name: agentFunName } }
+  const { response } = await createChatCompletion({
+    body: llmCompletionsBodyFormat(
+      {
+        model: extractModel.model,
+        temperature: 0.01,
+        messages: filterMessages,
+        tools,
+        tool_choice: { type: 'function', function: { name: agentFunName } }
+      },
+      extractModel
+    ),
+    userKey: user.openaiAccount
   });
 
   const arg: Record<string, any> = (() => {
     try {
       return json5.parse(
-        response?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments || '{}'
+        response?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments || ''
       );
     } catch (error) {
       console.log(agentFunction.parameters);
@@ -266,19 +268,20 @@ const functionCall = async (props: ActionProps) => {
   const { agentFunction, filterMessages } = await getFunctionCallSchema(props);
   const functions: ChatCompletionCreateParams.Function[] = [agentFunction];
 
-  const ai = getAIApi({
-    userKey: user.openaiAccount,
-    timeout: 480000
-  });
-
-  const response = await ai.chat.completions.create({
-    model: extractModel.model,
-    temperature: 0.01,
-    messages: filterMessages,
-    function_call: {
-      name: agentFunName
-    },
-    functions
+  const { response } = await createChatCompletion({
+    body: llmCompletionsBodyFormat(
+      {
+        model: extractModel.model,
+        temperature: 0.01,
+        messages: filterMessages,
+        function_call: {
+          name: agentFunName
+        },
+        functions
+      },
+      extractModel
+    ),
+    userKey: user.openaiAccount
   });
 
   try {
@@ -311,7 +314,7 @@ const completions = async ({
   extractModel,
   user,
   histories,
-  params: { content, extractKeys, description }
+  params: { content, extractKeys, description = 'No special requirements' }
 }: ActionProps) => {
   const messages: ChatItemType[] = [
     {
@@ -347,15 +350,17 @@ Human: ${content}`
     useVision: false
   });
 
-  const ai = getAIApi({
-    userKey: user.openaiAccount,
-    timeout: 480000
-  });
-  const data = await ai.chat.completions.create({
-    model: extractModel.model,
-    temperature: 0.01,
-    messages: requestMessages,
-    stream: false
+  const { response: data } = await createChatCompletion({
+    body: llmCompletionsBodyFormat(
+      {
+        model: extractModel.model,
+        temperature: 0.01,
+        messages: requestMessages,
+        stream: false
+      },
+      extractModel
+    ),
+    userKey: user.openaiAccount
   });
   const answer = data.choices?.[0].message?.content || '';
 

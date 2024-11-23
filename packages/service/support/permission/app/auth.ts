@@ -13,6 +13,7 @@ import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
 import { splitCombinePluginId } from '../../../core/app/plugin/controller';
 import { PluginSourceEnum } from '@fastgpt/global/core/plugin/constants';
 import { AuthModeType, AuthResponseType } from '../type';
+import { AppDefaultPermissionVal } from '@fastgpt/global/support/permission/app/constant';
 
 export const authPluginByTmbId = async ({
   tmbId,
@@ -25,22 +26,26 @@ export const authPluginByTmbId = async ({
 }) => {
   const { source } = await splitCombinePluginId(appId);
   if (source === PluginSourceEnum.personal) {
-    await authAppByTmbId({
+    const { app } = await authAppByTmbId({
       appId,
       tmbId,
       per
     });
+
+    return app;
   }
 };
 
 export const authAppByTmbId = async ({
   tmbId,
   appId,
-  per
+  per,
+  isRoot
 }: {
   tmbId: string;
   appId: string;
   per: PermissionValueType;
+  isRoot?: boolean;
 }): Promise<{
   app: AppDetailType;
 }> => {
@@ -53,13 +58,26 @@ export const authAppByTmbId = async ({
       return Promise.reject(AppErrEnum.unExist);
     }
 
+    if (isRoot) {
+      return {
+        ...app,
+        permission: new AppPermission({ isOwner: true })
+      };
+    }
+
     if (String(app.teamId) !== teamId) {
       return Promise.reject(AppErrEnum.unAuthApp);
     }
 
     const isOwner = tmbPer.isOwner || String(app.tmbId) === String(tmbId);
 
-    const { Per, defaultPermission } = await (async () => {
+    const { Per } = await (async () => {
+      if (isOwner) {
+        return {
+          Per: new AppPermission({ isOwner: true })
+        };
+      }
+
       if (
         AppFolderTypeList.includes(app.type) ||
         app.inheritPermission === false ||
@@ -74,10 +92,9 @@ export const authAppByTmbId = async ({
           resourceId: appId,
           resourceType: PerResourceTypeEnum.app
         });
-        const Per = new AppPermission({ per: rp?.permission ?? app.defaultPermission, isOwner });
+        const Per = new AppPermission({ per: rp ?? AppDefaultPermissionVal, isOwner });
         return {
-          Per,
-          defaultPermission: app.defaultPermission
+          Per
         };
       } else {
         // is not folder and inheritPermission is true and is not root folder.
@@ -92,8 +109,7 @@ export const authAppByTmbId = async ({
           isOwner
         });
         return {
-          Per,
-          defaultPermission: parent.defaultPermission
+          Per
         };
       }
     })();
@@ -104,7 +120,6 @@ export const authAppByTmbId = async ({
 
     return {
       ...app,
-      defaultPermission,
       permission: Per
     };
   })();
@@ -134,7 +149,8 @@ export const authApp = async ({
   const { app } = await authAppByTmbId({
     tmbId,
     appId,
-    per
+    per,
+    isRoot: result.isRoot
   });
 
   return {

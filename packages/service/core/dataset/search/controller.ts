@@ -12,7 +12,7 @@ import {
   DatasetDataWithCollectionType,
   SearchDataResponseItemType
 } from '@fastgpt/global/core/dataset/type';
-import { DatasetColCollectionName, MongoDatasetCollection } from '../collection/schema';
+import { MongoDatasetCollection } from '../collection/schema';
 import { reRankRecall } from '../../../core/ai/rerank';
 import { countPromptTokens } from '../../../common/string/tiktoken/index';
 import { datasetSearchResultConcat } from '@fastgpt/global/core/dataset/search/utils';
@@ -118,7 +118,10 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
     let createTimeCollectionIdList: string[] | undefined = undefined;
 
     try {
-      const jsonMatch = json5.parse(collectionFilterMatch);
+      const jsonMatch =
+        typeof collectionFilterMatch === 'object'
+          ? collectionFilterMatch
+          : json5.parse(collectionFilterMatch);
 
       // Tag
       let andTags = jsonMatch?.tags?.$and as (string | null)[] | undefined;
@@ -271,7 +274,7 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
         collectionId: { $in: Array.from(new Set(results.map((item) => item.collectionId))) },
         'indexes.dataId': { $in: results.map((item) => item.id?.trim()) }
       },
-      'datasetId collectionId q a chunkIndex indexes'
+      'datasetId collectionId updateTime q a chunkIndex indexes'
     )
       .populate('collectionId', 'name fileId rawLink externalFileId externalFileUrl')
       .lean()) as DatasetDataWithCollectionType[];
@@ -299,6 +302,7 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
 
       const result: SearchDataResponseItemType = {
         id: String(data._id),
+        updateTime: data.updateTime,
         q: data.q,
         a: data.a,
         chunkIndex: data.chunkIndex,
@@ -319,11 +323,13 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
   const fullTextRecall = async ({
     query,
     limit,
-    filterCollectionIdList
+    filterCollectionIdList,
+    forbidCollectionIdList
   }: {
     query: string;
     limit: number;
     filterCollectionIdList?: string[];
+    forbidCollectionIdList: string[];
   }): Promise<{
     fullTextRecallResults: SearchDataResponseItemType[];
     tokenLen: number;
@@ -344,10 +350,17 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
                 teamId: new Types.ObjectId(teamId),
                 datasetId: new Types.ObjectId(id),
                 $text: { $search: jiebaSplit({ text: query }) },
-                ...(filterCollectionIdList && filterCollectionIdList.length > 0
+                ...(filterCollectionIdList
                   ? {
                       collectionId: {
                         $in: filterCollectionIdList.map((id) => new Types.ObjectId(id))
+                      }
+                    }
+                  : {}),
+                ...(forbidCollectionIdList && forbidCollectionIdList.length > 0
+                  ? {
+                      collectionId: {
+                        $nin: forbidCollectionIdList.map((id) => new Types.ObjectId(id))
                       }
                     }
                   : {})
@@ -367,35 +380,11 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
               $limit: limit
             },
             {
-              $lookup: {
-                from: DatasetColCollectionName,
-                let: { collectionId: '$collectionId' },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $eq: ['$_id', '$$collectionId'] },
-                      forbid: { $eq: true } // 匹配被禁用的数据
-                    }
-                  },
-                  {
-                    $project: {
-                      _id: 1 // 只需要_id字段来确认匹配
-                    }
-                  }
-                ],
-                as: 'collection'
-              }
-            },
-            {
-              $match: {
-                collection: { $eq: [] } // 没有 forbid=true 的数据
-              }
-            },
-            {
               $project: {
                 _id: 1,
                 datasetId: 1,
                 collectionId: 1,
+                updateTime: 1,
                 q: 1,
                 a: 1,
                 chunkIndex: 1,
@@ -425,6 +414,7 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
           id: String(item._id),
           datasetId: String(item.datasetId),
           collectionId: String(item.collectionId),
+          updateTime: item.updateTime,
           ...getCollectionSourceData(collection),
           q: item.q,
           a: item.a,
@@ -506,7 +496,8 @@ export async function searchDatasetData(props: SearchDatasetDataProps) {
           fullTextRecall({
             query,
             limit: fullTextLimit,
-            filterCollectionIdList
+            filterCollectionIdList,
+            forbidCollectionIdList
           })
         ]);
         totalTokens += tokens;

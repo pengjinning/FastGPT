@@ -11,17 +11,10 @@ import {
   InputGroup,
   InputLeftElement,
   ModalBody,
-  ModalFooter,
-  NumberDecrementStepper,
-  NumberIncrementStepper,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  Switch,
-  Textarea
+  ModalFooter
 } from '@chakra-ui/react';
 import FillRowTabs from '@fastgpt/web/components/common/Tabs/FillRowTabs';
-import { useRequest, useRequest2 } from '@fastgpt/web/hooks/useRequest';
+import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import EmptyTip from '@fastgpt/web/components/common/EmptyTip';
 import {
   FlowNodeTemplateType,
@@ -39,20 +32,28 @@ import MyBox from '@fastgpt/web/components/common/MyBox';
 import { Controller, useForm } from 'react-hook-form';
 import { getTeamPlugTemplates } from '@/web/core/app/api/plugin';
 import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
-import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
 import { getAppFolderPath } from '@/web/core/app/api/app';
 import FolderPath from '@/components/common/folder/Path';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import CostTooltip from '@/components/core/app/plugin/CostTooltip';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import RenderPluginInput from '@/components/core/chat/ChatContainer/PluginRunBox/components/renderPluginInput';
-import { WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
+import { NodeInputKeyEnum, WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
+import { useContextSelector } from 'use-context-selector';
+import { AppContext } from '../../context';
 
 type Props = {
   selectedTools: FlowNodeTemplateType[];
   onAddTool: (tool: FlowNodeTemplateType) => void;
   onRemoveTool: (tool: NodeTemplateListItemType) => void;
 };
+
+const childAppSystemKey: string[] = [
+  NodeInputKeyEnum.forbidStream,
+  NodeInputKeyEnum.history,
+  NodeInputKeyEnum.historyMaxAmount,
+  NodeInputKeyEnum.userChatInput
+];
 
 enum TemplateTypeEnum {
   'systemPlugin' = 'systemPlugin',
@@ -61,6 +62,7 @@ enum TemplateTypeEnum {
 
 const ToolSelectModal = ({ onClose, ...props }: Props & { onClose: () => void }) => {
   const { t } = useTranslation();
+  const { appDetail } = useContextSelector(AppContext, (v) => v);
 
   const [templateType, setTemplateType] = useState(TemplateTypeEnum.teamPlugin);
   const [parentId, setParentId] = useState<ParentIdType>('');
@@ -85,9 +87,8 @@ const ToolSelectModal = ({ onClose, ...props }: Props & { onClose: () => void })
       } else if (type === TemplateTypeEnum.teamPlugin) {
         return getTeamPlugTemplates({
           parentId,
-          searchKey: searchVal,
-          type: [AppTypeEnum.folder, AppTypeEnum.httpPlugin, AppTypeEnum.plugin]
-        });
+          searchKey: searchVal
+        }).then((res) => res.filter((app) => app.id !== appDetail._id));
       }
     },
     {
@@ -238,20 +239,24 @@ const RenderList = React.memo(function RenderList({
     }
   }, [configTool, reset]);
 
-  const { mutate: onClickAdd, isLoading } = useRequest({
-    mutationFn: async (template: FlowNodeTemplateType) => {
+  const { runAsync: onClickAdd, loading: isLoading } = useRequest2(
+    async (template: NodeTemplateListItemType) => {
       const res = await getPreviewPluginNode({ appId: template.id });
 
       // All input is tool params
-      if (res.inputs.every((input) => input.toolDescription)) {
+      if (
+        res.inputs.every((input) => childAppSystemKey.includes(input.key) || input.toolDescription)
+      ) {
         onAddTool(res);
       } else {
         reset();
         setConfigTool(res);
       }
     },
-    errorToast: t('common:core.module.templates.Load plugin error')
-  });
+    {
+      errorToast: t('common:core.module.templates.Load plugin error')
+    }
+  );
 
   return templates.length === 0 && !isLoadingData ? (
     <EmptyTip text={t('common:core.app.ToolCall.No plugin')} />
@@ -304,7 +309,7 @@ const RenderList = React.memo(function RenderList({
               </Box>
               {item.author !== undefined && (
                 <Box fontSize={'xs'} mr={3}>
-                  {`by ${item.author || feConfigs.systemTitle}`}
+                  {`By ${item.author || feConfigs.systemTitle}`}
                 </Box>
               )}
               {selected ? (
@@ -340,6 +345,7 @@ const RenderList = React.memo(function RenderList({
       {!!configTool && (
         <MyModal
           isOpen
+          isCentered
           title={t('common:core.app.ToolCall.Parameter setting')}
           iconSrc="core/app/toolCall"
           overflow={'auto'}
@@ -348,18 +354,18 @@ const RenderList = React.memo(function RenderList({
             <HStack mb={4} spacing={1} fontSize={'sm'}>
               <MyIcon name={'common/info'} w={'1.25rem'} />
               <Box flex={1}>{t('app:tool_input_param_tip')}</Box>
-              {configTool.inputExplanationUrl && (
+              {configTool.courseUrl && (
                 <Box
                   cursor={'pointer'}
                   color={'primary.500'}
-                  onClick={() => window.open(configTool.inputExplanationUrl, '_blank')}
+                  onClick={() => window.open(configTool.courseUrl, '_blank')}
                 >
                   {t('app:workflow.Input guide')}
                 </Box>
               )}
             </HStack>
             {configTool.inputs
-              .filter((item) => !item.toolDescription)
+              .filter((item) => !item.toolDescription && !childAppSystemKey.includes(item.key))
               .map((input) => {
                 return (
                   <Controller
@@ -381,6 +387,7 @@ const RenderList = React.memo(function RenderList({
                           isInvalid={errors && Object.keys(errors).includes(input.key)}
                           onChange={onChange}
                           input={input}
+                          setUploading={() => {}}
                         />
                       );
                     }}

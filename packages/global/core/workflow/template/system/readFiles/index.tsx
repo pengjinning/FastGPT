@@ -13,7 +13,7 @@ import {
 import { FlowNodeTemplateType } from '../../../type/node';
 import { getHandleConfig } from '../../utils';
 
-export const ReadFilesNodes: FlowNodeTemplateType = {
+export const ReadFilesNode: FlowNodeTemplateType = {
   id: FlowNodeTypeEnum.readFiles,
   templateType: FlowNodeTemplateTypeEnum.tools,
   flowNodeType: FlowNodeTypeEnum.readFiles,
@@ -23,8 +23,9 @@ export const ReadFilesNodes: FlowNodeTemplateType = {
   name: i18nT('app:workflow.read_files'),
   intro: i18nT('app:workflow.read_files_tip'),
   showStatus: true,
-  version: '489',
-  isTool: true,
+  version: '4812',
+  isTool: false,
+  courseUrl: '/docs/guide/course/fileinput/',
   inputs: [
     {
       key: NodeInputKeyEnum.fileUrlList,

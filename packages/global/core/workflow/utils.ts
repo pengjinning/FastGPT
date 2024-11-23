@@ -12,7 +12,12 @@ import {
   VARIABLE_NODE_ID,
   NodeOutputKeyEnum
 } from './constants';
-import { FlowNodeInputItemType, FlowNodeOutputItemType, ReferenceValueProps } from './type/io.d';
+import {
+  FlowNodeInputItemType,
+  FlowNodeOutputItemType,
+  ReferenceArrayValueType,
+  ReferenceItemValueType
+} from './type/io.d';
 import { StoreNodeItemType } from './type/node';
 import type {
   VariableItemType,
@@ -30,9 +35,18 @@ import {
 } from '../app/constants';
 import { IfElseResultEnum } from './template/system/ifElse/constant';
 import { RuntimeNodeItemType } from './runtime/type';
-import { getReferenceVariableValue } from './runtime/utils';
-import { Input_Template_History, Input_Template_UserChatInput } from './template/input';
+import {
+  Input_Template_File_Link,
+  Input_Template_History,
+  Input_Template_Stream_MODE,
+  Input_Template_UserChatInput
+} from './template/input';
 import { i18nT } from '../../../web/i18n/utils';
+import { RuntimeUserPromptType, UserChatItemType } from '../../core/chat/type';
+import { getNanoid } from '../../common/string/tools';
+import { ChatRoleEnum } from '../../core/chat/constants';
+import { runtimePrompt2ChatsValue } from '../../core/chat/adapt';
+import { getPluginRunContent } from '../../core/app/plugin/utils';
 
 export const getHandleId = (nodeId: string, type: 'source' | 'target', key: string) => {
   return `${nodeId}-${type}-${key}`;
@@ -174,17 +188,21 @@ export const pluginData2FlowNodeIO = ({
   const pluginOutput = nodes.find((node) => node.flowNodeType === FlowNodeTypeEnum.pluginOutput);
 
   return {
-    inputs:
-      pluginInput?.inputs.map((item) => ({
-        ...item,
-        ...getModuleInputUiField(item),
-        value: getOrInitModuleInputValue(item),
-        canEdit: false,
-        renderTypeList:
-          item.renderTypeList[0] === FlowNodeInputTypeEnum.customVariable
-            ? [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.input]
-            : item.renderTypeList
-      })) || [],
+    inputs: pluginInput
+      ? [
+          Input_Template_Stream_MODE,
+          ...pluginInput?.inputs.map((item) => ({
+            ...item,
+            ...getModuleInputUiField(item),
+            value: getOrInitModuleInputValue(item),
+            canEdit: false,
+            renderTypeList:
+              item.renderTypeList[0] === FlowNodeInputTypeEnum.customVariable
+                ? [FlowNodeInputTypeEnum.reference, FlowNodeInputTypeEnum.input]
+                : item.renderTypeList
+          }))
+        ]
+      : [],
     outputs: pluginOutput
       ? [
           ...pluginOutput.inputs.map((item) => ({
@@ -217,6 +235,7 @@ export const appData2FlowNodeIO = ({
             FlowNodeInputTypeEnum.textarea,
             FlowNodeInputTypeEnum.reference
           ],
+          [VariableInputEnum.numberInput]: [FlowNodeInputTypeEnum.numberInput],
           [VariableInputEnum.select]: [FlowNodeInputTypeEnum.select],
           [VariableInputEnum.custom]: [
             FlowNodeInputTypeEnum.input,
@@ -233,7 +252,7 @@ export const appData2FlowNodeIO = ({
           description: '',
           valueType: WorkflowIOValueTypeEnum.any,
           required: item.required,
-          list: item.enums.map((enumItem) => ({
+          list: item.enums?.map((enumItem) => ({
             label: enumItem.value,
             value: enumItem.value
           }))
@@ -245,9 +264,12 @@ export const appData2FlowNodeIO = ({
 
   return {
     inputs: [
+      Input_Template_Stream_MODE,
       Input_Template_History,
+      ...(chatConfig?.fileSelectConfig?.canSelectFile || chatConfig?.fileSelectConfig?.canSelectImg
+        ? [Input_Template_File_Link]
+        : []),
       Input_Template_UserChatInput,
-      // ...(showFileLink ? [Input_Template_File_Link] : []),
       ...variableInput
     ],
     outputs: [
@@ -283,8 +305,37 @@ export const formatEditorVariablePickerIcon = (
   }));
 };
 
-export const isReferenceValue = (value: any): boolean => {
+// Check the value is a valid reference value format: [variableId, outputId]
+export const isValidReferenceValueFormat = (value: any): value is ReferenceItemValueType => {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'string';
+};
+/* 
+  Check whether the value([variableId, outputId]) value is a valid reference value:
+  1. The value must be an array of length 2
+  2. The first item of the array must be one of VARIABLE_NODE_ID or nodeIds
+*/
+export const isValidReferenceValue = (
+  value: any,
+  nodeIds: string[]
+): value is ReferenceItemValueType => {
+  if (!isValidReferenceValueFormat(value)) return false;
+
+  const validIdSet = new Set([VARIABLE_NODE_ID, ...nodeIds]);
+  return validIdSet.has(value[0]);
+};
+/* 
+  Check whether the value([variableId, outputId][]) value is a valid reference value array:
+  1. The value must be an array
+  2. The array must contain at least one element
+  3. Each element in the array must be a valid reference value
+*/
+export const isValidArrayReferenceValue = (
+  value: any,
+  nodeIds: string[]
+): value is ReferenceArrayValueType => {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((item) => isValidReferenceValue(item, nodeIds));
 };
 
 export const getElseIFLabel = (i: number) => {
@@ -326,93 +377,25 @@ export const updatePluginInputByVariables = (
   );
 };
 
-/* Remove pluginInput variables from global variables
-  (completions api: Plugin input get value from global variables) 
-*/
-export const removePluginInputVariables = (
-  variables: Record<string, any>,
-  nodes: RuntimeNodeItemType[]
-) => {
-  const pluginInputNode = nodes.find((node) => node.flowNodeType === FlowNodeTypeEnum.pluginInput);
-
-  if (!pluginInputNode) return variables;
-  return Object.keys(variables).reduce(
-    (acc, key) => {
-      if (!pluginInputNode.inputs.find((input) => input.key === key)) {
-        acc[key] = variables[key];
-      }
-      return acc;
-    },
-    {} as Record<string, any>
-  );
-};
-
-// replace {{$xx.xx$}} variables for text
-export function replaceEditorVariable({
-  text,
-  nodes,
+/* Get plugin runtime input user query */
+export const getPluginRunUserQuery = ({
+  pluginInputs,
   variables,
-  runningNode
+  files = []
 }: {
-  text: any;
-  nodes: RuntimeNodeItemType[];
-  variables: Record<string, any>; // global variables
-  runningNode: RuntimeNodeItemType;
-}) {
-  if (typeof text !== 'string') return text;
-
-  const globalVariables = Object.keys(variables).map((key) => {
-    return {
-      nodeId: VARIABLE_NODE_ID,
-      id: key,
-      value: variables[key]
-    };
-  });
-
-  // Upstream node outputs
-  const nodeVariables = nodes
-    .map((node) => {
-      return node.outputs.map((output) => {
-        return {
-          nodeId: node.nodeId,
-          id: output.id,
-          value: output.value
-        };
-      });
+  pluginInputs: FlowNodeInputItemType[];
+  variables: Record<string, any>;
+  files?: RuntimeUserPromptType['files'];
+}): UserChatItemType & { dataId: string } => {
+  return {
+    dataId: getNanoid(24),
+    obj: ChatRoleEnum.Human,
+    value: runtimePrompt2ChatsValue({
+      text: getPluginRunContent({
+        pluginInputs: pluginInputs,
+        variables
+      }),
+      files
     })
-    .flat();
-
-  // Get runningNode inputs(Will be replaced with reference)
-  const customInputs = runningNode.inputs.flatMap((item) => {
-    if (Array.isArray(item.value)) {
-      return [
-        {
-          id: item.key,
-          value: getReferenceVariableValue({
-            value: item.value as ReferenceValueProps,
-            nodes,
-            variables
-          }),
-          nodeId: runningNode.nodeId
-        }
-      ];
-    }
-    return [];
-  });
-
-  const allVariables = [...globalVariables, ...nodeVariables, ...customInputs];
-
-  // Replace {{$xxx.xxx$}} to value
-  for (const key in allVariables) {
-    const val = allVariables[key];
-    const regex = new RegExp(`\\{\\{\\$(${val.nodeId}\\.${val.id})\\$\\}\\}`, 'g');
-    if (['string', 'number'].includes(typeof val.value)) {
-      text = text.replace(regex, String(val.value));
-    } else if (['object'].includes(typeof val.value)) {
-      text = text.replace(regex, JSON.stringify(val.value));
-    } else {
-      continue;
-    }
-  }
-  return text || '';
-}
+  };
+};

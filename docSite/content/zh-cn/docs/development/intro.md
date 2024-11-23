@@ -7,11 +7,11 @@ toc: true
 weight: 705
 ---
 
-本文档介绍了如何设置开发环境以构建和测试 [FastGPT](https://fastgpt.in)，。
+本文档介绍了如何设置开发环境以构建和测试 [FastGPT](https://tryfastgpt.ai)，。
 
 ## 前置依赖项
 
-您需要在计算机上安装和配置以下依赖项才能构建 [FastGPT](https://fastgpt.in)：
+您需要在计算机上安装和配置以下依赖项才能构建 [FastGPT](https://tryfastgpt.ai)：
 
 - [Git](http://git-scm.com/)
 - [Docker](https://www.docker.com/)（构建镜像）
@@ -150,7 +150,7 @@ FastGPT 在`pnpm i`后会执行`postinstall`脚本，用于自动生成`ChakraUI
 
 遇到困难了吗？有任何问题吗? 加入微信群与开发者和用户保持沟通。
 
-<img width="400px" src="https://oss.laf.run/htr4n1-images/fastgpt-qr-code.jpg" class="medium-zoom-image" />
+<img width="400px" src="https://oss.laf.run/otnvvf-imgs/fastgpt-feishu1.png" class="medium-zoom-image" />
 
 ## 代码结构说明
 

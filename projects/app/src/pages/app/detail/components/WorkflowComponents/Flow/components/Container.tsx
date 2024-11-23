@@ -1,14 +1,13 @@
 import React from 'react';
-import { Box } from '@chakra-ui/react';
+import { Flex } from '@chakra-ui/react';
 import { BoxProps } from '@chakra-ui/react';
 
 const Container = ({ children, ...props }: BoxProps) => {
   return (
-    <Box
-      px={4}
-      mx={2}
-      mb={2}
-      py={'10px'}
+    <Flex
+      flexDirection={'column'}
+      mx={3}
+      p={4}
       position={'relative'}
       bg={'myGray.50'}
       border={'1px solid #F0F1F6'}
@@ -16,7 +15,7 @@ const Container = ({ children, ...props }: BoxProps) => {
       {...props}
     >
       {children}
-    </Box>
+    </Flex>
   );
 };
 

@@ -20,27 +20,25 @@ export type UserInputFileItemType = {
 
 export type ChatBoxInputFormType = {
   input: string;
-  files: UserInputFileItemType[];
+  files: UserInputFileItemType[]; // global files
   chatStarted: boolean;
+  variables: Record<string, any>;
 };
 
 export type ChatBoxInputType = {
   text?: string;
   files?: UserInputFileItemType[];
+  isInteractivePrompt?: boolean;
 };
 
-export type SendPromptFnType = ({
-  text,
-  files,
-  history,
-  autoTTSResponse
-}: ChatBoxInputType & {
-  autoTTSResponse?: boolean;
-  history?: ChatSiteItemType[];
-}) => void;
+export type SendPromptFnType = (
+  e: ChatBoxInputType & {
+    autoTTSResponse?: boolean;
+    history?: ChatSiteItemType[];
+  }
+) => void;
 
 export type ComponentRef = {
   restartChat: () => void;
   scrollToBottom: (behavior?: 'smooth' | 'auto') => void;
-  sendPrompt: (question: string) => void;
 };

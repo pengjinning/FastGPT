@@ -34,6 +34,7 @@ export type FastGPTFeConfigsType = {
   show_openai_account?: boolean;
   show_promotion?: boolean;
   show_team_chat?: boolean;
+  show_compliance_copywriting?: boolean;
   concatMd?: string;
 
   docUrl?: string;
@@ -55,6 +56,7 @@ export type FastGPTFeConfigsType = {
     github?: string;
     google?: string;
     wechat?: string;
+    microsoft?: string;
   };
   limit?: {
     exportDatasetLimitMinutes?: number;

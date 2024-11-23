@@ -99,7 +99,7 @@ const NodeCQNode = ({ data, selected }: NodeProps<FlowNodeItemType>) => {
                     nodeId={nodeId}
                     handleId={getHandleId(nodeId, 'source', item.key)}
                     position={Position.Right}
-                    translate={[26, 0]}
+                    translate={[34, 0]}
                   />
                 </Box>
               </Box>
@@ -130,12 +130,16 @@ const NodeCQNode = ({ data, selected }: NodeProps<FlowNodeItemType>) => {
     [nodeId, onChangeNode, t]
   );
 
-  return (
-    <NodeCard minW={'400px'} selected={selected} {...data}>
-      <Container>
-        <RenderInput nodeId={nodeId} flowInputList={inputs} CustomComponent={CustomComponent} />
-      </Container>
-    </NodeCard>
-  );
+  const Render = useMemo(() => {
+    return (
+      <NodeCard minW={'400px'} selected={selected} {...data}>
+        <Container>
+          <RenderInput nodeId={nodeId} flowInputList={inputs} CustomComponent={CustomComponent} />
+        </Container>
+      </NodeCard>
+    );
+  }, [CustomComponent, data, inputs, nodeId, selected]);
+
+  return Render;
 };
 export default React.memo(NodeCQNode);

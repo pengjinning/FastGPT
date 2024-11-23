@@ -8,51 +8,118 @@ import { authOpenApiKey } from '../openapi/auth';
 import { FileTokenQuery } from '@fastgpt/global/common/file/type';
 import { MongoResourcePermission } from './schema';
 import { ClientSession } from 'mongoose';
-import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
-import { ResourcePermissionType } from '@fastgpt/global/support/permission/type';
+import {
+  PermissionValueType,
+  ResourcePermissionType,
+  ResourcePerWithGroup,
+  ResourcePerWithTmbWithUser
+} from '@fastgpt/global/support/permission/type';
 import { bucketNameMap } from '@fastgpt/global/common/file/constants';
 import { addMinutes } from 'date-fns';
+import { getGroupsByTmbId } from './memberGroup/controllers';
+import { Permission } from '@fastgpt/global/support/permission/controller';
+import { ParentIdType } from '@fastgpt/global/common/parentFolder/type';
+import { RequireOnlyOne } from '@fastgpt/global/common/type/utils';
+import { CommonErrEnum } from '@fastgpt/global/common/error/code/common';
 
+/** get resource permission for a team member
+ * If there is no permission for the team member, it will return undefined
+ * @param resourceType: PerResourceTypeEnum
+ * @param teamId
+ * @param tmbId
+ * @param resourceId
+ * @returns PermissionValueType | undefined
+ */
 export const getResourcePermission = async ({
   resourceType,
   teamId,
   tmbId,
   resourceId
 }: {
-  resourceType: PerResourceTypeEnum;
   teamId: string;
   tmbId: string;
-  resourceId?: string;
-}) => {
-  const per = await MongoResourcePermission.findOne({
-    tmbId,
-    teamId,
-    resourceType,
-    resourceId
-  });
+} & (
+  | {
+      resourceType: 'team';
+      resourceId?: undefined;
+    }
+  | {
+      resourceType: Omit<PerResourceTypeEnum, 'team'>;
+      resourceId: string;
+    }
+)): Promise<PermissionValueType | undefined> => {
+  // Personal permission has the highest priority
+  const tmbPer = (
+    await MongoResourcePermission.findOne(
+      {
+        resourceType,
+        teamId,
+        resourceId,
+        tmbId
+      },
+      'permission'
+    ).lean()
+  )?.permission;
 
-  if (!per) {
-    return null;
+  // could be 0
+  if (tmbPer !== undefined) {
+    return tmbPer;
   }
-  return per;
+
+  // If there is no personal permission, get the group permission
+  const groupIdList = (await getGroupsByTmbId({ tmbId, teamId })).map((item) => item._id);
+
+  if (groupIdList.length === 0) {
+    return undefined;
+  }
+
+  // get the maximum permission of the group
+  const pers = (
+    await MongoResourcePermission.find(
+      {
+        teamId,
+        resourceType,
+        groupId: {
+          $in: groupIdList
+        },
+        resourceId
+      },
+      'permission'
+    ).lean()
+  ).map((item) => item.permission);
+
+  const groupPer = getGroupPer(pers);
+
+  return groupPer;
 };
+
+/* 仅取 members 不取 groups */
 export async function getResourceAllClbs({
   resourceId,
   teamId,
   resourceType,
   session
 }: {
-  resourceId: ParentIdType;
   teamId: string;
-  resourceType: PerResourceTypeEnum;
   session?: ClientSession;
-}): Promise<ResourcePermissionType[]> {
-  if (!resourceId) return [];
+} & (
+  | {
+      resourceType: 'team';
+      resourceId?: undefined;
+    }
+  | {
+      resourceType: Omit<PerResourceTypeEnum, 'team'>;
+      resourceId?: string | null;
+    }
+)): Promise<ResourcePermissionType[]> {
   return MongoResourcePermission.find(
     {
-      resourceId,
       resourceType: resourceType,
-      teamId: teamId
+      teamId: teamId,
+      resourceId,
+      groupId: {
+        $exists: false
+      }
     },
     null,
     {
@@ -60,31 +127,111 @@ export async function getResourceAllClbs({
     }
   ).lean();
 }
+
+export async function getResourceClbsAndGroups({
+  resourceId,
+  resourceType,
+  teamId,
+  session
+}: {
+  resourceId: ParentIdType;
+  resourceType: Omit<`${PerResourceTypeEnum}`, 'team'>;
+  teamId: string;
+  session: ClientSession;
+}) {
+  return MongoResourcePermission.find(
+    {
+      resourceId,
+      resourceType,
+      teamId
+    },
+    undefined,
+    { session }
+  ).lean();
+}
+
+export const getClbsAndGroupsWithInfo = async ({
+  resourceId,
+  resourceType,
+  teamId
+}: {
+  resourceId: ParentIdType;
+  resourceType: Omit<`${PerResourceTypeEnum}`, 'team'>;
+  teamId: string;
+}) =>
+  Promise.all([
+    (await MongoResourcePermission.find({
+      teamId,
+      resourceId,
+      resourceType,
+      tmbId: {
+        $exists: true
+      }
+    }).populate({
+      path: 'tmbId',
+      select: 'name userId',
+      populate: {
+        path: 'userId',
+        select: 'avatar'
+      }
+    })) as ResourcePerWithTmbWithUser[],
+    (await MongoResourcePermission.find({
+      teamId,
+      resourceId,
+      resourceType,
+      groupId: {
+        $exists: true
+      }
+    }).populate({
+      path: 'groupId',
+      select: 'name avatar'
+    })) as ResourcePerWithGroup[]
+  ]);
+
 export const delResourcePermissionById = (id: string) => {
   return MongoResourcePermission.findByIdAndRemove(id);
 };
 export const delResourcePermission = ({
   session,
+  tmbId,
+  groupId,
   ...props
 }: {
   resourceType: PerResourceTypeEnum;
-  resourceId: string;
   teamId: string;
-  tmbId: string;
+  resourceId: string;
   session?: ClientSession;
+  tmbId?: string;
+  groupId?: string;
 }) => {
-  return MongoResourcePermission.deleteOne(props, { session });
+  // tmbId or groupId only one and not both
+  if (!!tmbId === !!groupId) {
+    return Promise.reject(CommonErrEnum.missingParams);
+  }
+  return MongoResourcePermission.deleteOne(
+    {
+      ...(tmbId ? { tmbId } : {}),
+      ...(groupId ? { groupId } : {}),
+      ...props
+    },
+    { session }
+  );
 };
 
 /* 下面代码等迁移 */
 /* create token */
-export function createJWT(user: { _id?: string; team?: { teamId?: string; tmbId: string } }) {
+export function createJWT(user: {
+  _id?: string;
+  team?: { teamId?: string; tmbId: string };
+  isRoot?: boolean;
+}) {
   const key = process.env.TOKEN_KEY as string;
   const token = jwt.sign(
     {
       userId: String(user._id),
       teamId: String(user.team?.teamId),
       tmbId: String(user.team?.tmbId),
+      isRoot: user.isRoot,
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7
     },
     key
@@ -98,6 +245,7 @@ export function authJWT(token: string) {
     userId: string;
     teamId: string;
     tmbId: string;
+    isRoot: boolean;
   }>((resolve, reject) => {
     const key = process.env.TOKEN_KEY as string;
 
@@ -110,7 +258,8 @@ export function authJWT(token: string) {
       resolve({
         userId: decoded.userId,
         teamId: decoded.teamId || '',
-        tmbId: decoded.tmbId
+        tmbId: decoded.tmbId,
+        isRoot: decoded.isRoot
       });
     });
   });
@@ -164,14 +313,15 @@ export async function parseHeaderCert({
     })();
 
     // auth apikey
-    const { teamId, tmbId, appId: apiKeyAppId = '' } = await authOpenApiKey({ apikey });
+    const { teamId, tmbId, appId: apiKeyAppId = '', sourceName } = await authOpenApiKey({ apikey });
 
     return {
       uid: '',
       teamId,
       tmbId,
       apikey,
-      appId: apiKeyAppId || authorizationAppid
+      appId: apiKeyAppId || authorizationAppid,
+      sourceName
     };
   }
   // root user
@@ -183,46 +333,50 @@ export async function parseHeaderCert({
 
   const { cookie, token, rootkey, authorization } = (req.headers || {}) as ReqHeaderAuthType;
 
-  const { uid, teamId, tmbId, appId, openApiKey, authType } = await (async () => {
-    if (authApiKey && authorization) {
-      // apikey from authorization
-      const authResponse = await parseAuthorization(authorization);
-      return {
-        uid: authResponse.uid,
-        teamId: authResponse.teamId,
-        tmbId: authResponse.tmbId,
-        appId: authResponse.appId,
-        openApiKey: authResponse.apikey,
-        authType: AuthUserTypeEnum.apikey
-      };
-    }
-    if (authToken && (token || cookie)) {
-      // user token(from fastgpt web)
-      const res = await authCookieToken(cookie, token);
-      return {
-        uid: res.userId,
-        teamId: res.teamId,
-        tmbId: res.tmbId,
-        appId: '',
-        openApiKey: '',
-        authType: AuthUserTypeEnum.token
-      };
-    }
-    if (authRoot && rootkey) {
-      await parseRootKey(rootkey);
-      // root user
-      return {
-        uid: '',
-        teamId: '',
-        tmbId: '',
-        appId: '',
-        openApiKey: '',
-        authType: AuthUserTypeEnum.root
-      };
-    }
+  const { uid, teamId, tmbId, appId, openApiKey, authType, isRoot, sourceName } =
+    await (async () => {
+      if (authApiKey && authorization) {
+        // apikey from authorization
+        const authResponse = await parseAuthorization(authorization);
+        return {
+          uid: authResponse.uid,
+          teamId: authResponse.teamId,
+          tmbId: authResponse.tmbId,
+          appId: authResponse.appId,
+          openApiKey: authResponse.apikey,
+          authType: AuthUserTypeEnum.apikey,
+          sourceName: authResponse.sourceName
+        };
+      }
+      if (authToken && (token || cookie)) {
+        // user token(from fastgpt web)
+        const res = await authCookieToken(cookie, token);
+        return {
+          uid: res.userId,
+          teamId: res.teamId,
+          tmbId: res.tmbId,
+          appId: '',
+          openApiKey: '',
+          authType: AuthUserTypeEnum.token,
+          isRoot: res.isRoot
+        };
+      }
+      if (authRoot && rootkey) {
+        await parseRootKey(rootkey);
+        // root user
+        return {
+          uid: '',
+          teamId: '',
+          tmbId: '',
+          appId: '',
+          openApiKey: '',
+          authType: AuthUserTypeEnum.root,
+          isRoot: true
+        };
+      }
 
-    return Promise.reject(ERROR_ENUM.unAuthorization);
-  })();
+      return Promise.reject(ERROR_ENUM.unAuthorization);
+    })();
 
   if (!authRoot && (!teamId || !tmbId)) {
     return Promise.reject(ERROR_ENUM.unAuthorization);
@@ -234,7 +388,9 @@ export async function parseHeaderCert({
     tmbId: String(tmbId),
     appId,
     authType,
-    apikey: openApiKey
+    sourceName,
+    apikey: openApiKey,
+    isRoot: !!isRoot
   };
 }
 
@@ -291,3 +447,11 @@ export const authFileToken = (token?: string) =>
       });
     });
   });
+
+export const getGroupPer = (groups: PermissionValueType[] = []) => {
+  if (groups.length === 0) {
+    return undefined;
+  }
+
+  return new Permission().addPer(...groups).value;
+};

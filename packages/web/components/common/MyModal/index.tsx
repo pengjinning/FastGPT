@@ -6,7 +6,8 @@ import {
   ModalHeader,
   ModalCloseButton,
   ModalContentProps,
-  Box
+  Box,
+  ImageProps
 } from '@chakra-ui/react';
 import MyBox from '../MyBox';
 import { useSystem } from '../../../hooks/useSystem';
@@ -14,13 +15,14 @@ import Avatar from '../Avatar';
 
 export interface MyModalProps extends ModalContentProps {
   iconSrc?: string;
-  iconColor?: string;
+  iconColor?: ImageProps['color'];
   title?: any;
   isCentered?: boolean;
   isLoading?: boolean;
   isOpen?: boolean;
   onClose?: () => void;
   closeOnOverlayClick?: boolean;
+  size?: 'md' | 'lg';
 }
 
 const MyModal = ({
@@ -35,6 +37,7 @@ const MyModal = ({
   maxW = ['90vw', '600px'],
   closeOnOverlayClick = true,
   iconColor,
+  size = 'md',
   ...props
 }: MyModalProps) => {
   const { isPc } = useSystem();
@@ -43,6 +46,7 @@ const MyModal = ({
     <Modal
       isOpen={isOpen}
       onClose={() => onClose && onClose()}
+      size={size}
       autoFocus={false}
       isCentered={isPc ? isCentered : true}
       blockScrollOnMount={false}
@@ -78,7 +82,7 @@ const MyModal = ({
                   alt=""
                   src={iconSrc}
                   w={'1.5rem'}
-                  borderRadius={'md'}
+                  borderRadius={'sm'}
                 />
               </>
             )}

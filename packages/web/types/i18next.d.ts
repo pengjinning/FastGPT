@@ -7,6 +7,7 @@ import publish from '../i18n/zh/publish.json';
 import workflow from '../i18n/zh/workflow.json';
 import user from '../i18n/zh/user.json';
 import chat from '../i18n/zh/chat.json';
+import login from '../i18n/zh/login.json';
 
 export interface I18nNamespaces {
   common: typeof common;
@@ -17,26 +18,13 @@ export interface I18nNamespaces {
   workflow: typeof workflow;
   user: typeof user;
   chat: typeof chat;
+  login: typeof login;
 }
 
 export type I18nNsType = (keyof I18nNamespaces)[];
 
-export type I18nCommonKey = NestedKeyOf<I18nNamespaces['common']>;
-export type I18nDataSetKey = NestedKeyOf<I18nNamespaces['dataset']>;
-export type I18nAppKey = NestedKeyOf<I18nNamespaces['app']>;
-export type I18nPublishKey = NestedKeyOf<I18nNamespaces['publish']>;
-export type I18nWorkflowKey = NestedKeyOf<I18nNamespaces['workflow']>;
-export type I18nUserKey = NestedKeyOf<I18nNamespaces['user']>;
-export type I18nChatKey = NestedKeyOf<I18nNamespaces['chat']>;
-
-export type NestedKeyOf<ObjectType extends object> = {
-  [Key in keyof ObjectType & (string | number)]: ObjectType[Key] extends object
-    ? `${Key}` | `${Key}.${NestedKeyOf<ObjectType[Key]>}`
-    : `${Key}`;
-}[keyof ObjectType & (string | number)];
-
 export type ParseKeys<Ns extends keyof I18nNamespaces = keyof I18nNamespaces> = {
-  [K in Ns]: `${K}:${NestedKeyOf<I18nNamespaces[K]>}`;
+  [K in Ns]: `${K}:${keyof I18nNamespaces[K] & string}`;
 }[Ns];
 
 export type I18nKeyFunction = {
@@ -46,7 +34,7 @@ export type I18nKeyFunction = {
 declare module 'i18next' {
   interface CustomTypeOptions {
     returnNull: false;
-    defaultNS: ['common', 'dataset', 'app', 'file', 'publish', 'workflow', 'user', 'chat'];
+    defaultNS: ['common', 'dataset', 'app', 'file', 'publish', 'workflow', 'user', 'chat', 'login'];
     resources: I18nNamespaces;
   }
 }

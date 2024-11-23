@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactFlow, { NodeProps, ReactFlowProvider } from 'reactflow';
+import ReactFlow, { NodeProps, SelectionMode } from 'reactflow';
 import { Box, IconButton, useDisclosure } from '@chakra-ui/react';
 import { SmallCloseIcon } from '@chakra-ui/icons';
 import { EDGE_TYPE, FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
@@ -11,15 +11,14 @@ import NodeTemplatesModal from './NodeTemplatesModal';
 
 import 'reactflow/dist/style.css';
 import { FlowNodeItemType } from '@fastgpt/global/core/workflow/type/node.d';
-import { connectionLineStyle, defaultEdgeOptions } from '../constants';
+import { connectionLineStyle, defaultEdgeOptions, maxZoom, minZoom } from '../constants';
 import { useContextSelector } from 'use-context-selector';
-import { WorkflowContext } from '../context';
 import { useWorkflow } from './hooks/useWorkflow';
 import HelperLines from './components/HelperLines';
 import FlowController from './components/FlowController';
-
-export const minZoom = 0.1;
-export const maxZoom = 1.5;
+import ContextMenu from './components/ContextMenu';
+import { WorkflowNodeEdgeContext, WorkflowInitContext } from '../context/workflowInitContext';
+import { WorkflowEventContext } from '../context/workflowEventContext';
 
 const NodeSimple = dynamic(() => import('./nodes/NodeSimple'));
 const nodeTypes: Record<FlowNodeTypeEnum, any> = {
@@ -48,18 +47,30 @@ const nodeTypes: Record<FlowNodeTypeEnum, any> = {
   [FlowNodeTypeEnum.stopTool]: (data: NodeProps<FlowNodeItemType>) => (
     <NodeSimple {...data} minW={'100px'} maxW={'300px'} />
   ),
+  [FlowNodeTypeEnum.toolParams]: dynamic(() => import('./nodes/NodeToolParams')),
   [FlowNodeTypeEnum.lafModule]: dynamic(() => import('./nodes/NodeLaf')),
   [FlowNodeTypeEnum.ifElseNode]: dynamic(() => import('./nodes/NodeIfElse')),
   [FlowNodeTypeEnum.variableUpdate]: dynamic(() => import('./nodes/NodeVariableUpdate')),
   [FlowNodeTypeEnum.code]: dynamic(() => import('./nodes/NodeCode')),
-  [FlowNodeTypeEnum.userSelect]: dynamic(() => import('./nodes/NodeUserSelect'))
+  [FlowNodeTypeEnum.userSelect]: dynamic(() => import('./nodes/NodeUserSelect')),
+  [FlowNodeTypeEnum.loop]: dynamic(() => import('./nodes/Loop/NodeLoop')),
+  [FlowNodeTypeEnum.loopStart]: dynamic(() => import('./nodes/Loop/NodeLoopStart')),
+  [FlowNodeTypeEnum.loopEnd]: dynamic(() => import('./nodes/Loop/NodeLoopEnd')),
+  [FlowNodeTypeEnum.formInput]: dynamic(() => import('./nodes/NodeFormInput')),
+  [FlowNodeTypeEnum.comment]: dynamic(() => import('./nodes/NodeComment'))
 };
 const edgeTypes = {
   [EDGE_TYPE]: ButtonEdge
 };
 
 const Workflow = () => {
-  const { nodes, edges, reactFlowWrapper } = useContextSelector(WorkflowContext, (v) => v);
+  const nodes = useContextSelector(WorkflowInitContext, (v) => v.nodes);
+  const edges = useContextSelector(WorkflowNodeEdgeContext, (v) => v.edges);
+  const reactFlowWrapper = useContextSelector(WorkflowEventContext, (v) => v.reactFlowWrapper);
+  const workflowControlMode = useContextSelector(
+    WorkflowEventContext,
+    (v) => v.workflowControlMode
+  );
 
   const {
     handleNodesChange,
@@ -70,7 +81,10 @@ const Workflow = () => {
     onEdgeMouseEnter,
     onEdgeMouseLeave,
     helperLineHorizontal,
-    helperLineVertical
+    helperLineVertical,
+    onNodeDragStop,
+    onPaneContextMenu,
+    onPaneClick
   } = useWorkflow();
 
   const {
@@ -112,6 +126,7 @@ const Workflow = () => {
           <NodeTemplatesModal isOpen={isOpenTemplate} onClose={onCloseTemplate} />
         </>
 
+        <ContextMenu />
         <ReactFlow
           ref={reactFlowWrapper}
           fitView
@@ -124,6 +139,7 @@ const Workflow = () => {
           connectionLineStyle={connectionLineStyle}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          connectionRadius={50}
           onNodesChange={handleNodesChange}
           onEdgesChange={handleEdgeChange}
           onConnect={customOnConnect}
@@ -131,6 +147,20 @@ const Workflow = () => {
           onConnectEnd={onConnectEnd}
           onEdgeMouseEnter={onEdgeMouseEnter}
           onEdgeMouseLeave={onEdgeMouseLeave}
+          panOnScrollSpeed={2}
+          onPaneContextMenu={onPaneContextMenu}
+          onPaneClick={onPaneClick}
+          {...(workflowControlMode === 'select'
+            ? {
+                selectionMode: SelectionMode.Full,
+                selectNodesOnDrag: false,
+                selectionOnDrag: true,
+                selectionKeyCode: null,
+                panOnDrag: false,
+                panOnScroll: true
+              }
+            : {})}
+          onNodeDragStop={onNodeDragStop}
         >
           <FlowController />
           <HelperLines horizontal={helperLineHorizontal} vertical={helperLineVertical} />
@@ -140,12 +170,4 @@ const Workflow = () => {
   );
 };
 
-const Render = () => {
-  return (
-    <ReactFlowProvider>
-      <Workflow />
-    </ReactFlowProvider>
-  );
-};
-
-export default React.memo(Render);
+export default React.memo(Workflow);

@@ -8,6 +8,9 @@ import type { RuntimeNodeItemType } from '@fastgpt/global/core/workflow/runtime/
 import { ChatNodeUsageType } from '@fastgpt/global/support/wallet/bill/type';
 import type { DispatchFlowResponse } from '../../type.d';
 import { AIChatItemValueItemType, ChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
+import { WorkflowInteractiveResponseType } from '@fastgpt/global/core/workflow/template/system/interactive/type';
+import { LLMModelItemType } from '@fastgpt/global/core/ai/model';
 
 export type DispatchToolModuleProps = ModuleDispatchProps<{
   [NodeInputKeyEnum.history]?: ChatItemType[];
@@ -18,13 +21,21 @@ export type DispatchToolModuleProps = ModuleDispatchProps<{
   [NodeInputKeyEnum.aiChatTemperature]: number;
   [NodeInputKeyEnum.aiChatMaxToken]: number;
   [NodeInputKeyEnum.aiChatVision]?: boolean;
-}>;
+  [NodeInputKeyEnum.fileUrlList]?: string[];
+}> & {
+  messages: ChatCompletionMessageParam[];
+  toolNodes: ToolNodeItemType[];
+  toolModel: LLMModelItemType;
+  interactiveEntryToolParams?: WorkflowInteractiveResponseType['toolParams'];
+};
 
 export type RunToolResponse = {
   dispatchFlowResponse: DispatchFlowResponse[];
-  totalTokens: number;
+  toolNodeTokens: number;
   completeMessages?: ChatCompletionMessageParam[];
   assistantResponses?: AIChatItemValueItemType[];
+  toolWorkflowInteractiveResponse?: WorkflowInteractiveResponseType;
+  [DispatchNodeResponseKeyEnum.runTimes]: number;
 };
 export type ToolNodeItemType = RuntimeNodeItemType & {
   toolParams: RuntimeNodeItemType['inputs'];

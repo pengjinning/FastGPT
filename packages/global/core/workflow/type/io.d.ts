@@ -50,10 +50,17 @@ export type FlowNodeInputItemType = InputComponentPropsType & {
   description?: string; // field desc
   required?: boolean;
   toolDescription?: string; // If this field is not empty, it is entered as a tool
+  enum?: string;
 
   // render components params
   canEdit?: boolean; // dynamic inputs
   isPro?: boolean; // Pro version field
+  isToolOutput?: boolean;
+
+  // file
+  canSelectFile?: boolean;
+  canSelectImg?: boolean;
+  maxFiles?: number;
 };
 
 export type FlowNodeOutputItemType = {
@@ -73,4 +80,6 @@ export type FlowNodeOutputItemType = {
   customFieldConfig?: CustomFieldConfigType;
 };
 
-export type ReferenceValueProps = [string, string | undefined];
+export type ReferenceItemValueType = [string, string | undefined];
+export type ReferenceArrayValueType = ReferenceItemValueType[];
+export type ReferenceValueType = ReferenceItemValueType | ReferenceArrayValueType;

@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
 import { useCopyData } from '@/web/common/hooks/useCopyData';
 import { useTranslation } from 'next-i18next';
-import { Node } from 'reactflow';
+import { Node, useKeyPress } from 'reactflow';
 import { FlowNodeItemType } from '@fastgpt/global/core/workflow/type/node';
 import { useContextSelector } from 'use-context-selector';
-import { WorkflowContext, getWorkflowStore } from '../../context';
 import { useWorkflowUtils } from './useUtils';
+import { useKeyPress as useKeyPressEffect } from 'ahooks';
+import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
+import { WorkflowNodeEdgeContext } from '../../context/workflowInitContext';
+import { WorkflowEventContext } from '../../context/workflowEventContext';
 
 export const useKeyboard = () => {
   const { t } = useTranslation();
-  const { setNodes, onSaveWorkflow } = useContextSelector(WorkflowContext, (v) => v);
+  const getNodes = useContextSelector(WorkflowNodeEdgeContext, (v) => v.getNodes);
+  const setNodes = useContextSelector(WorkflowNodeEdgeContext, (v) => v.setNodes);
+  const mouseInCanvas = useContextSelector(WorkflowEventContext, (v) => v.mouseInCanvas);
+
   const { copyData } = useCopyData();
   const { computedNewNodeName } = useWorkflowUtils();
 
-  const [isDowningCtrl, setIsDowningCtrl] = useState(false);
+  const isDowningCtrl = useKeyPress(['Meta', 'Control']);
 
   const hasInputtingElement = useCallback(() => {
     const activeElement = document.activeElement;
@@ -31,14 +37,14 @@ export const useKeyboard = () => {
 
   const onCopy = useCallback(async () => {
     if (hasInputtingElement()) return;
-    const { nodes } = await getWorkflowStore();
+    const nodes = getNodes();
 
     const selectedNodes = nodes.filter(
       (node) => node.selected && !node.data?.isError && node.data?.unique !== true
     );
     if (selectedNodes.length === 0) return;
     copyData(JSON.stringify(selectedNodes), t('common:core.workflow.Copy node'));
-  }, [copyData, hasInputtingElement, t]);
+  }, [copyData, getNodes, hasInputtingElement, t]);
 
   const onParse = useCallback(async () => {
     if (hasInputtingElement()) return;
@@ -49,7 +55,9 @@ export const useKeyboard = () => {
       if (!Array.isArray(parseData)) return;
       // filter workflow data
       const newNodes = parseData
-        .filter((item) => !!item.type && item.data?.unique !== true)
+        .filter(
+          (item) => !!item.type && item.data?.unique !== true && item.type !== FlowNodeTypeEnum.loop
+        )
         .map((item) => {
           const nodeId = getNanoid();
           return {
@@ -63,7 +71,8 @@ export const useKeyboard = () => {
                 flowNodeType: item.data?.flowNodeType || '',
                 pluginId: item.data?.pluginId
               }),
-              nodeId
+              nodeId,
+              parentNodeId: undefined
             },
             position: {
               x: item.position.x + 100,
@@ -72,6 +81,7 @@ export const useKeyboard = () => {
           };
         });
 
+      // Reset all node to not select and concat new node
       setNodes((prev) =>
         prev
           .map((node) => ({
@@ -84,48 +94,18 @@ export const useKeyboard = () => {
     } catch (error) {}
   }, [computedNewNodeName, hasInputtingElement, setNodes]);
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        setIsDowningCtrl(true);
-
-        switch (event.key) {
-          case 'c':
-            onCopy();
-            break;
-          case 'v':
-            onParse();
-            break;
-          case 's':
-            event.preventDefault();
-
-            onSaveWorkflow();
-            break;
-          default:
-            break;
-        }
-      }
-    },
-    [onCopy, onParse, onSaveWorkflow]
-  );
-
-  const handleKeyUp = useCallback((event: KeyboardEvent) => {
-    setIsDowningCtrl(false);
-  }, []);
-
-  useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleKeyDown]);
-
-  useEffect(() => {
-    document.addEventListener('keyup', handleKeyUp);
-    return () => {
-      document.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [handleKeyUp]);
+  useKeyPressEffect(['ctrl.c', 'meta.c'], (e) => {
+    if (!mouseInCanvas) return;
+    onCopy();
+  });
+  useKeyPressEffect(['ctrl.v', 'meta.v'], (e) => {
+    if (!mouseInCanvas) return;
+    onParse();
+  });
+  useKeyPressEffect(['ctrl.s', 'meta.s'], (e) => {
+    e.preventDefault();
+    if (!mouseInCanvas) return;
+  });
 
   return {
     isDowningCtrl

@@ -1,43 +1,23 @@
 import { useSpeech } from '@/web/common/hooks/useSpeech';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
-import {
-  Box,
-  CircularProgress,
-  CircularProgressLabel,
-  Flex,
-  HStack,
-  Image,
-  Spinner,
-  Textarea
-} from '@chakra-ui/react';
+import { Box, Flex, Spinner, Textarea } from '@chakra-ui/react';
 import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'next-i18next';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import MyIcon from '@fastgpt/web/components/common/Icon';
-import { useSelectFile } from '@/web/common/file/hooks/useSelectFile';
-import { uploadFile2DB } from '@/web/common/file/controller';
-import { ChatFileTypeEnum } from '@fastgpt/global/core/chat/constants';
 import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
-import {
-  ChatBoxInputFormType,
-  ChatBoxInputType,
-  SendPromptFnType,
-  UserInputFileItemType
-} from '../type';
+import { ChatBoxInputFormType, ChatBoxInputType, SendPromptFnType } from '../type';
 import { textareaMinH } from '../constants';
-import { UseFormReturn, useFieldArray } from 'react-hook-form';
+import { useFieldArray, UseFormReturn } from 'react-hook-form';
 import { ChatBoxContext } from '../Provider';
 import dynamic from 'next/dynamic';
 import { useContextSelector } from 'use-context-selector';
-import { getNanoid } from '@fastgpt/global/common/string/tools';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
 import { documentFileType } from '@fastgpt/global/common/file/constants';
-import { getFileIcon } from '@fastgpt/global/common/file/icon';
+import FilePreview from '../../components/FilePreview';
+import { useFileUpload } from '../hooks/useFileUpload';
+import ComplianceTip from '@/components/common/ComplianceTip/index';
 import { useToast } from '@fastgpt/web/hooks/useToast';
-import { clone } from 'lodash';
-import { formatFileSize } from '@fastgpt/global/common/file/tools';
-import MyBox from '@fastgpt/web/components/common/MyBox';
-import { getErrText } from '@fastgpt/global/common/error/utils';
 
 const InputGuideBox = dynamic(() => import('./InputGuideBox'));
 
@@ -64,21 +44,11 @@ const ChatInput = ({
   appId: string;
 }) => {
   const { isPc } = useSystem();
-  const { toast } = useToast();
   const { t } = useTranslation();
-  const { feConfigs } = useSystemStore();
+  const { toast } = useToast();
 
   const { setValue, watch, control } = chatForm;
   const inputValue = watch('input');
-  const {
-    update: updateFiles,
-    remove: removeFiles,
-    fields: fileList,
-    replace: replaceFiles
-  } = useFieldArray({
-    control,
-    name: 'files'
-  });
 
   const {
     chatId,
@@ -90,165 +60,38 @@ const ChatInput = ({
     fileSelectConfig
   } = useContextSelector(ChatBoxContext, (v) => v);
 
+  const fileCtrl = useFieldArray({
+    control,
+    name: 'files'
+  });
+  const {
+    File,
+    onOpenSelectFile,
+    fileList,
+    onSelectFile,
+    uploadFiles,
+    selectFileIcon,
+    selectFileLabel,
+    showSelectFile,
+    showSelectImg,
+    removeFiles,
+    replaceFiles,
+    hasFileUploading
+  } = useFileUpload({
+    outLinkAuthData,
+    chatId: chatId || '',
+    fileSelectConfig,
+    fileCtrl
+  });
   const havInput = !!inputValue || fileList.length > 0;
-  const hasFileUploading = fileList.some((item) => !item.url);
   const canSendMessage = havInput && !hasFileUploading;
 
-  const showSelectFile = fileSelectConfig.canSelectFile;
-  const showSelectImg = fileSelectConfig.canSelectImg;
-  const maxSelectFiles = fileSelectConfig.maxFiles ?? 10;
-  const maxSize = (feConfigs?.uploadFileMaxSize || 1024) * 1024 * 1024; // nkb
-  const { icon: selectFileIcon, tooltip: selectFileTip } = useMemo(() => {
-    if (showSelectFile) {
-      return {
-        icon: 'core/chat/fileSelect',
-        tooltip: t('chat:select_file')
-      };
-    } else if (showSelectImg) {
-      return {
-        icon: 'core/chat/fileSelect',
-        tooltip: t('chat:select_img')
-      };
-    }
-    return {};
-  }, [showSelectFile, showSelectImg, t]);
-
-  /* file selector and upload */
-  const { File, onOpen: onOpenSelectFile } = useSelectFile({
-    fileType: `${showSelectImg ? 'image/*,' : ''} ${showSelectFile ? documentFileType : ''}`,
-    multiple: true,
-    maxCount: maxSelectFiles
-  });
   // Upload files
-  useRequest2(
-    async () => {
-      const filterFiles = fileList.filter((item) => item.status === 0);
-
-      if (filterFiles.length === 0) return;
-
-      replaceFiles(fileList.map((item) => ({ ...item, status: 1 })));
-      let errorFileIndex: number[] = [];
-
-      await Promise.allSettled(
-        filterFiles.map(async (file) => {
-          const copyFile = clone(file);
-          copyFile.status = 1;
-          if (!copyFile.rawFile) return;
-
-          try {
-            const fileIndex = fileList.findIndex((item) => item.id === file.id)!;
-
-            // Start upload and update process
-            const { previewUrl } = await uploadFile2DB({
-              file: copyFile.rawFile,
-              bucketName: 'chat',
-              outLinkAuthData,
-              metadata: {
-                chatId
-              },
-              percentListen(e) {
-                copyFile.process = e;
-                if (!copyFile.url) {
-                  updateFiles(fileIndex, copyFile);
-                }
-              }
-            });
-
-            // Update file url
-            copyFile.url = `${location.origin}${previewUrl}`;
-            updateFiles(fileIndex, copyFile);
-          } catch (error) {
-            errorFileIndex.push(fileList.findIndex((item) => item.id === file.id)!);
-            toast({
-              status: 'warning',
-              title: t(
-                getErrText(error, t('common:error.upload_file_error_filename', { name: file.name }))
-              )
-            });
-          }
-        })
-      );
-
-      removeFiles(errorFileIndex);
-    },
-    {
-      manual: false,
-      errorToast: t('common:upload_file_error'),
-      refreshDeps: [fileList, outLinkAuthData, chatId]
-    }
-  );
-  const onSelectFile = useCallback(
-    async (files: File[]) => {
-      if (!files || files.length === 0) {
-        return;
-      }
-      // filter max files
-      if (fileList.length + files.length > maxSelectFiles) {
-        files = files.slice(0, maxSelectFiles - fileList.length);
-        toast({
-          status: 'warning',
-          title: t('chat:file_amount_over', { max: maxSelectFiles })
-        });
-      }
-
-      const filterFilesByMaxSize = files.filter((file) => file.size <= maxSize);
-      if (filterFilesByMaxSize.length < files.length) {
-        toast({
-          status: 'warning',
-          title: t('file:some_file_size_exceeds_limit', { maxSize: formatFileSize(maxSize) })
-        });
-      }
-
-      const loadFiles = await Promise.all(
-        filterFilesByMaxSize.map(
-          (file) =>
-            new Promise<UserInputFileItemType>((resolve, reject) => {
-              if (file.type.includes('image')) {
-                const reader = new FileReader();
-                reader.readAsDataURL(file);
-                reader.onload = () => {
-                  const item: UserInputFileItemType = {
-                    id: getNanoid(6),
-                    rawFile: file,
-                    type: ChatFileTypeEnum.image,
-                    name: file.name,
-                    icon: reader.result as string,
-                    status: 0
-                  };
-                  resolve(item);
-                };
-                reader.onerror = () => {
-                  reject(reader.error);
-                };
-              } else {
-                resolve({
-                  id: getNanoid(6),
-                  rawFile: file,
-                  type: ChatFileTypeEnum.file,
-                  name: file.name,
-                  icon: getFileIcon(file.name),
-                  status: 0
-                });
-              }
-            })
-        )
-      );
-
-      // Document, image
-      const concatFileList = clone(
-        fileList.concat(loadFiles).sort((a, b) => {
-          if (a.type === ChatFileTypeEnum.image && b.type === ChatFileTypeEnum.file) {
-            return 1;
-          } else if (a.type === ChatFileTypeEnum.file && b.type === ChatFileTypeEnum.image) {
-            return -1;
-          }
-          return 0;
-        })
-      );
-      replaceFiles(concatFileList);
-    },
-    [fileList, maxSelectFiles, replaceFiles, toast, t, maxSize]
-  );
+  useRequest2(uploadFiles, {
+    manual: false,
+    errorToast: t('common:upload_file_error'),
+    refreshDeps: [fileList, outLinkAuthData, chatId]
+  });
 
   /* on send */
   const handleSend = useCallback(
@@ -277,6 +120,35 @@ const ChatInput = ({
     renderAudioGraph,
     stream
   } = useSpeech({ appId, ...outLinkAuthData });
+  const onWhisperRecord = useCallback(() => {
+    const finishWhisperTranscription = (text: string) => {
+      if (!text) return;
+      if (whisperConfig?.autoSend) {
+        onSendMessage({
+          text,
+          files: fileList,
+          autoTTSResponse
+        });
+        replaceFiles([]);
+      } else {
+        resetInputVal({ text });
+      }
+    };
+    if (isSpeaking) {
+      return stopSpeak();
+    }
+    startSpeak(finishWhisperTranscription);
+  }, [
+    autoTTSResponse,
+    fileList,
+    isSpeaking,
+    onSendMessage,
+    replaceFiles,
+    resetInputVal,
+    startSpeak,
+    stopSpeak,
+    whisperConfig?.autoSend
+  ]);
   useEffect(() => {
     if (!stream) {
       return;
@@ -294,28 +166,6 @@ const ChatInput = ({
     };
     renderCurve();
   }, [renderAudioGraph, stream]);
-  const finishWhisperTranscription = useCallback(
-    (text: string) => {
-      if (!text) return;
-      if (whisperConfig?.autoSend) {
-        onSendMessage({
-          text,
-          files: fileList,
-          autoTTSResponse
-        });
-        replaceFiles([]);
-      } else {
-        resetInputVal({ text });
-      }
-    },
-    [autoTTSResponse, fileList, onSendMessage, replaceFiles, resetInputVal, whisperConfig?.autoSend]
-  );
-  const onWhisperRecord = useCallback(() => {
-    if (isSpeaking) {
-      return stopSpeak();
-    }
-    startSpeak(finishWhisperTranscription);
-  }, [finishWhisperTranscription, isSpeaking, startSpeak, stopSpeak]);
 
   const RenderTranslateLoading = useMemo(
     () => (
@@ -338,91 +188,7 @@ const ChatInput = ({
     ),
     [isSpeaking, isTransCription, t]
   );
-  const RenderFilePreview = useMemo(
-    () =>
-      fileList.length > 0 ? (
-        <Flex
-          maxH={'250px'}
-          overflowY={'auto'}
-          wrap={'wrap'}
-          px={[2, 4]}
-          pt={3}
-          userSelect={'none'}
-          gap={2}
-          mb={fileList.length > 0 ? 2 : 0}
-        >
-          {fileList.map((item, index) => (
-            <MyBox
-              key={index}
-              border={'sm'}
-              boxShadow={
-                '0px 2.571px 6.429px 0px rgba(19, 51, 107, 0.08), 0px 0px 0.643px 0px rgba(19, 51, 107, 0.08)'
-              }
-              rounded={'md'}
-              position={'relative'}
-              _hover={{
-                '.close-icon': { display: 'block' }
-              }}
-            >
-              <MyIcon
-                name={'closeSolid'}
-                w={'16px'}
-                h={'16px'}
-                color={'myGray.700'}
-                cursor={'pointer'}
-                _hover={{ color: 'red.500' }}
-                position={'absolute'}
-                bg={'white'}
-                right={'-8px'}
-                top={'-8px'}
-                onClick={() => removeFiles(index)}
-                className="close-icon"
-                display={['', 'none']}
-                zIndex={10}
-              />
-              {item.type === ChatFileTypeEnum.image && (
-                <Image
-                  alt={'img'}
-                  src={item.icon}
-                  w={['2rem', '3rem']}
-                  h={['2rem', '3rem']}
-                  borderRadius={'md'}
-                  objectFit={'contain'}
-                />
-              )}
-              {item.type === ChatFileTypeEnum.file && (
-                <HStack minW={['100px', '150px']} maxW={'250px'} p={2}>
-                  <MyIcon name={item.icon as any} w={['1.5rem', '2rem']} h={['1.5rem', '2rem']} />
-                  <Box flex={'1 0 0'} className="textEllipsis" fontSize={'xs'}>
-                    {item.name}
-                  </Box>
-                </HStack>
-              )}
-              {/* Process */}
-              {!item.url && (
-                <Flex
-                  position={'absolute'}
-                  inset="0"
-                  bg="rgba(255,255,255,0.4)"
-                  alignItems="center"
-                  justifyContent="center"
-                >
-                  <CircularProgress
-                    value={item.process}
-                    color="primary.600"
-                    bg={'white'}
-                    size={isPc ? '30px' : '35px'}
-                  >
-                    {/* <CircularProgressLabel>{item.process ?? 0}%</CircularProgressLabel> */}
-                  </CircularProgress>
-                </Flex>
-              )}
-            </MyBox>
-          ))}
-        </Flex>
-      ) : null,
-    [fileList, isPc, removeFiles]
-  );
+
   const RenderTextarea = useMemo(
     () => (
       <Flex alignItems={'flex-end'} mt={fileList.length > 0 ? 1 : 0} pl={[2, 4]}>
@@ -439,10 +205,10 @@ const ChatInput = ({
               onOpenSelectFile();
             }}
           >
-            <MyTooltip label={selectFileTip}>
+            <MyTooltip label={selectFileLabel}>
               <MyIcon name={selectFileIcon as any} w={'18px'} color={'myGray.600'} />
             </MyTooltip>
-            <File onSelect={onSelectFile} />
+            <File onSelect={(files) => onSelectFile({ files })} />
           </Flex>
         )}
 
@@ -457,7 +223,11 @@ const ChatInput = ({
             border: 'none'
           }}
           placeholder={
-            isSpeaking ? t('common:core.chat.Speaking') : t('common:core.chat.Type a message')
+            isSpeaking
+              ? t('common:core.chat.Speaking')
+              : isPc
+                ? t('common:core.chat.Type a message')
+                : t('chat:input_placeholder_phone')
           }
           resize={'none'}
           rows={1}
@@ -512,12 +282,12 @@ const ChatInput = ({
               const files = Array.from(items)
                 .map((item) => (item.kind === 'file' ? item.getAsFile() : undefined))
                 .filter((file) => {
-                  console.log(file);
                   return file && fileTypeFilter(file);
                 }) as File[];
-              onSelectFile(files);
+              onSelectFile({ files });
 
               if (files.length > 0) {
+                e.preventDefault();
                 e.stopPropagation();
               }
             }
@@ -525,7 +295,7 @@ const ChatInput = ({
         />
         <Flex alignItems={'center'} position={'absolute'} right={[2, 4]} bottom={['10px', '12px']}>
           {/* voice-input */}
-          {whisperConfig.open && !havInput && !isChatting && !!whisperModel && (
+          {whisperConfig.open && !inputValue && !isChatting && !!whisperModel && (
             <>
               <canvas
                 ref={canvasRef}
@@ -641,7 +411,7 @@ const ChatInput = ({
     [
       File,
       TextareaDom,
-      fileList.length,
+      fileList,
       handleSend,
       hasFileUploading,
       havInput,
@@ -655,7 +425,7 @@ const ChatInput = ({
       onStop,
       onWhisperRecord,
       selectFileIcon,
-      selectFileTip,
+      selectFileLabel,
       setValue,
       showSelectFile,
       showSelectImg,
@@ -668,7 +438,36 @@ const ChatInput = ({
   );
 
   return (
-    <Box m={['0 auto', '10px auto']} w={'100%'} maxW={['auto', 'min(800px, 100%)']} px={[0, 5]}>
+    <Box
+      m={['0 auto', '10px auto']}
+      w={'100%'}
+      maxW={['auto', 'min(800px, 100%)']}
+      px={[0, 5]}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+
+        if (!(showSelectFile || showSelectImg)) return;
+        const files = Array.from(e.dataTransfer.files);
+
+        const droppedFiles = files.filter((file) => fileTypeFilter(file));
+        if (droppedFiles.length > 0) {
+          onSelectFile({ files: droppedFiles });
+        }
+
+        const invalidFileName = files
+          .filter((file) => !fileTypeFilter(file))
+          .map((file) => file.name)
+          .join(', ');
+        if (invalidFileName) {
+          toast({
+            status: 'warning',
+            title: t('chat:unsupported_file_type'),
+            description: invalidFileName
+          });
+        }
+      }}
+    >
       <Box
         pt={fileList.length > 0 ? '0' : ['14px', '18px']}
         pb={['14px', '18px']}
@@ -705,10 +504,13 @@ const ChatInput = ({
         {RenderTranslateLoading}
 
         {/* file preview */}
-        {RenderFilePreview}
+        <Box px={[1, 3]}>
+          <FilePreview fileList={fileList} removeFiles={removeFiles} />
+        </Box>
 
         {RenderTextarea}
       </Box>
+      <ComplianceTip type={'chat'} />
     </Box>
   );
 };

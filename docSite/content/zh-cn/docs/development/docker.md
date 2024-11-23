@@ -35,7 +35,7 @@ weight: 707
 
 ### Milvus版本
 
-对于千万级以上向量性能更优秀。
+生产部署首选，对于千万级以上向量性能更优秀。
 
 [点击查看 Milvus 官方推荐配置](https://milvus.io/docs/prerequisite-docker.md)
 
@@ -49,7 +49,7 @@ weight: 707
 
 ### zilliz cloud版本
 
-亿级以上向量首选。
+Milvus 的全托管服务，性能优于 Milvus 并提供 SLA，点击使用 [Zilliz Cloud](https://zilliz.com.cn/)。
 
 由于向量库使用了 Cloud，无需占用本地资源，无需太关注。
 
@@ -110,7 +110,7 @@ brew install orbstack
 
 非 Linux 环境或无法访问外网环境，可手动创建一个目录，并下载配置文件和对应版本的`docker-compose.yml`，在这个文件夹中依据下载的配置文件运行docker，若作为本地开发使用推荐`docker-compose-pgvector`版本，并且自行拉取并运行`sandbox`和`fastgpt`，并在docker配置文件中注释掉`sandbox`和`fastgpt`的部分
 
-- [config.json](https://github.com/labring/FastGPT/blob/main/projects/app/data/config.json)
+- [config.json](https://raw.githubusercontent.com/labring/FastGPT/refs/heads/main/projects/app/data/config.json)
 - [docker-compose.yml](https://github.com/labring/FastGPT/blob/main/files/docker) (注意，不同向量库版本的文件不一样)
 
 {{% alert icon="🤖" context="success" %}}

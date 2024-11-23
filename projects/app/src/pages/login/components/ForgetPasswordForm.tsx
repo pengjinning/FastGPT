@@ -1,4 +1,4 @@
-import React, { useState, Dispatch, useCallback } from 'react';
+import React, { Dispatch } from 'react';
 import { FormControl, Box, Input, Button } from '@chakra-ui/react';
 import { useForm } from 'react-hook-form';
 import { LoginPageTypeEnum } from '@/web/support/user/login/constants';
@@ -8,6 +8,8 @@ import type { ResLogin } from '@/global/support/api/userRes.d';
 import { useToast } from '@fastgpt/web/hooks/useToast';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import { useTranslation } from 'next-i18next';
+import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
+
 interface Props {
   setPageType: Dispatch<`${LoginPageTypeEnum}`>;
   loginSuccess: (e: ResLogin) => void;
@@ -28,24 +30,15 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
     register,
     handleSubmit,
     getValues,
-    trigger,
+    watch,
     formState: { errors }
   } = useForm<RegisterType>({
     mode: 'onBlur'
   });
+  const username = watch('username');
 
-  const { codeSending, sendCodeText, sendCode, codeCountDown } = useSendCode();
+  const { SendCodeBox } = useSendCode({ type: 'findPassword' });
 
-  const onclickSendCode = useCallback(async () => {
-    const check = await trigger('username');
-    if (!check) return;
-    sendCode({
-      username: getValues('username'),
-      type: 'findPassword'
-    });
-  }, [getValues, sendCode, trigger]);
-
-  const [requesting, setRequesting] = useState(false);
   const placeholder = feConfigs?.find_password_method
     ?.map((item) => {
       switch (item) {
@@ -59,39 +52,32 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
     })
     .join('/');
 
-  const onclickFindPassword = useCallback(
+  const { runAsync: onclickFindPassword, loading: requesting } = useRequest2(
     async ({ username, code, password }: RegisterType) => {
-      setRequesting(true);
-      try {
-        loginSuccess(
-          await postFindPassword({
-            username,
-            code,
-            password
-          })
-        );
-        toast({
-          title: t('user:password.retrieved'),
-          status: 'success'
-        });
-      } catch (error: any) {
-        toast({
-          title: error.message || t('user:password.change_error'),
-          status: 'error'
-        });
-      }
-      setRequesting(false);
+      loginSuccess(
+        await postFindPassword({
+          username,
+          code,
+          password
+        })
+      );
+      toast({
+        status: 'success',
+        title: t('user:password.retrieved')
+      });
     },
-    [loginSuccess, toast]
+    {
+      refreshDeps: [loginSuccess, t, toast]
+    }
   );
 
   return (
     <>
-      <Box fontWeight={'bold'} fontSize={'2xl'} textAlign={'center'}>
+      <Box fontWeight={'medium'} fontSize={'lg'} textAlign={'center'} color={'myGray.900'}>
         {t('user:password.retrieved_account', { account: feConfigs?.systemTitle })}
       </Box>
       <Box
-        mt={'42px'}
+        mt={9}
         onKeyDown={(e) => {
           if (e.keyCode === 13 && !e.shiftKey && !requesting) {
             handleSubmit(onclickFindPassword)();
@@ -101,6 +87,7 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
         <FormControl isInvalid={!!errors.username}>
           <Input
             bg={'myGray.50'}
+            size={'lg'}
             placeholder={placeholder}
             {...register('username', {
               required: t('user:password.email_phone_void'),
@@ -121,6 +108,7 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
         >
           <Input
             bg={'myGray.50'}
+            size={'lg'}
             flex={1}
             maxLength={8}
             placeholder={t('user:password.verification_code')}
@@ -128,28 +116,13 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
               required: t('user:password.code_required')
             })}
           ></Input>
-          <Box
-            position={'absolute'}
-            right={3}
-            zIndex={1}
-            fontSize={'sm'}
-            {...(codeCountDown > 0
-              ? {
-                  color: 'myGray.500'
-                }
-              : {
-                  color: 'primary.700',
-                  cursor: 'pointer',
-                  onClick: onclickSendCode
-                })}
-          >
-            {sendCodeText}
-          </Box>
+          <SendCodeBox username={username} />
         </FormControl>
         <FormControl mt={6} isInvalid={!!errors.password}>
           <Input
             bg={'myGray.50'}
             type={'password'}
+            size={'lg'}
             placeholder={t('user:password.new_password')}
             {...register('password', {
               required: t('user:password.password_required'),
@@ -168,6 +141,7 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
           <Input
             bg={'myGray.50'}
             type={'password'}
+            size={'lg'}
             placeholder={t('user:password.confirm')}
             {...register('password2', {
               validate: (val) =>
@@ -178,9 +152,12 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
 
         <Button
           type="submit"
-          mt={10}
+          mt={12}
           w={'100%'}
           size={['md', 'md']}
+          rounded={['md', 'md']}
+          h={[10, 10]}
+          fontWeight={['medium', 'medium']}
           colorScheme="blue"
           isLoading={requesting}
           onClick={handleSubmit(onclickFindPassword)}
@@ -189,9 +166,10 @@ const RegisterForm = ({ setPageType, loginSuccess }: Props) => {
         </Button>
         <Box
           float={'right'}
-          fontSize="sm"
-          mt={2}
+          fontSize="mini"
+          mt={3}
           mb={'50px'}
+          fontWeight={'medium'}
           color={'primary.700'}
           cursor={'pointer'}
           _hover={{ textDecoration: 'underline' }}

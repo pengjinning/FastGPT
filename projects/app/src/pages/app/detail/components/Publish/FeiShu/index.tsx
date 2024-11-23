@@ -11,7 +11,8 @@ import {
   Td,
   Tbody,
   useDisclosure,
-  Link
+  Link,
+  HStack
 } from '@chakra-ui/react';
 import MyIcon from '@fastgpt/web/components/common/Icon';
 import { useLoading } from '@fastgpt/web/hooks/useLoading';
@@ -66,26 +67,27 @@ const FeiShu = ({ appId }: { appId: string }) => {
   return (
     <Box position={'relative'} pt={3} px={5} minH={'50vh'}>
       <Flex justifyContent={'space-between'} flexDirection="row">
-        <Flex alignItems={'center'}>
+        <HStack>
           <Box fontWeight={'bold'} fontSize={['md', 'lg']}>
             {t('common:core.app.publish.Fei shu bot publish')}
           </Box>
-
           {feConfigs?.docUrl && (
             <Link
-              href={feConfigs.openAPIDocUrl || getDocPath('/docs/course/feishu')}
+              href={
+                feConfigs.openAPIDocUrl ||
+                getDocPath('/docs/use-cases/external-integration/feishu/')
+              }
               target={'_blank'}
-              ml={2}
               color={'primary.500'}
               fontSize={'sm'}
             >
               <Flex alignItems={'center'}>
-                <MyIcon name="book" mr="1" />
+                <MyIcon name="book" mr="1" w={'1rem'} />
                 {t('common:common.Read document')}
               </Flex>
             </Link>
           )}
-        </Flex>
+        </HStack>
         <Button
           variant={'primary'}
           colorScheme={'blue'}
@@ -148,7 +150,7 @@ const FeiShu = ({ appId }: { appId: string }) => {
                 )}
                 <Td>
                   {item.lastTime
-                    ? t(formatTimeToChatTime(item.lastTime) as any)
+                    ? t(formatTimeToChatTime(item.lastTime) as any).replace('#', ':')
                     : t('common:common.Un used')}
                 </Td>
                 <Td display={'flex'} alignItems={'center'}>

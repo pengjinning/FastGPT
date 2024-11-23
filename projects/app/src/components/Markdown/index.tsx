@@ -22,6 +22,7 @@ const CodeLight = dynamic(() => import('./CodeLight'), { ssr: false });
 const MermaidCodeBlock = dynamic(() => import('./img/MermaidCodeBlock'), { ssr: false });
 const MdImage = dynamic(() => import('./img/Image'), { ssr: false });
 const EChartsCodeBlock = dynamic(() => import('./img/EChartsCodeBlock'), { ssr: false });
+const IframeCodeBlock = dynamic(() => import('./codeBlock/Iframe'), { ssr: false });
 
 const ChatGuide = dynamic(() => import('./chat/Guide'), { ssr: false });
 const QuestionGuide = dynamic(() => import('./chat/QuestionGuide'), { ssr: false });
@@ -29,17 +30,18 @@ const QuestionGuide = dynamic(() => import('./chat/QuestionGuide'), { ssr: false
 const Markdown = ({
   source = '',
   showAnimation = false,
-  isDisabled = false
+  isDisabled = false,
+  forbidZhFormat = false
 }: {
   source?: string;
   showAnimation?: boolean;
   isDisabled?: boolean;
+  forbidZhFormat?: boolean;
 }) => {
   const components = useMemo<any>(
     () => ({
       img: Image,
       pre: RewritePre,
-      p: (pProps: any) => <p {...pProps} dir="auto" />,
       code: Code,
       a: A
     }),
@@ -47,12 +49,35 @@ const Markdown = ({
   );
 
   const formatSource = useMemo(() => {
-    const formatSource = source
-      .replace(/(http[s]?:\/\/[^\s，。]+)([。，])/g, '$1 $2') // Follow the link with a space
+    if (showAnimation || forbidZhFormat) return source;
+
+    // 保护 URL 格式：https://, http://, /api/xxx
+    const urlPlaceholders: string[] = [];
+    const textWithProtectedUrls = source.replace(
+      /(https?:\/\/[^\s<]+[^<.,:;"')\]\s]|\/api\/[^\s]+)(?=\s|$)/g,
+      (match) => {
+        urlPlaceholders.push(match);
+        return `__URL_${urlPlaceholders.length - 1}__`;
+      }
+    );
+
+    // 处理中文与英文数字之间的分词
+    const textWithSpaces = textWithProtectedUrls
+      .replace(
+        /([\u4e00-\u9fa5\u3000-\u303f])([a-zA-Z0-9])|([a-zA-Z0-9])([\u4e00-\u9fa5\u3000-\u303f])/g,
+        '$1$3 $2$4'
+      )
+      // 处理引用标记
       .replace(/\n*(\[QUOTE SIGN\]\(.*\))/g, '$1');
 
-    return formatSource;
-  }, [source]);
+    // 还原 URL
+    const finalText = textWithSpaces.replace(
+      /__URL_(\d+)__/g,
+      (_, index) => urlPlaceholders[parseInt(index)]
+    );
+
+    return finalText;
+  }, [forbidZhFormat, showAnimation, source]);
 
   const urlTransform = useCallback((val: string) => {
     return val;
@@ -98,6 +123,9 @@ function Code(e: any) {
     }
     if (codeType === CodeClassNameEnum.echarts) {
       return <EChartsCodeBlock code={strChildren} />;
+    }
+    if (codeType === CodeClassNameEnum.iframe) {
+      return <IframeCodeBlock code={strChildren} />;
     }
 
     return (

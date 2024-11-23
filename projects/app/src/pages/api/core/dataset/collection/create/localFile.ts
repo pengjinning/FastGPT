@@ -26,15 +26,13 @@ import { WritePermissionVal } from '@fastgpt/global/support/permission/constant'
 import { CreateCollectionResponse } from '@/global/core/dataset/api';
 
 async function handler(req: NextApiRequest, res: NextApiResponse<any>): CreateCollectionResponse {
-  /**
-   * Creates the multer uploader
-   */
-  const upload = getUploadModel({
-    maxSize: global.feConfigs?.uploadFileMaxSize
-  });
   let filePaths: string[] = [];
 
   try {
+    // Create multer uploader
+    const upload = getUploadModel({
+      maxSize: global.feConfigs?.uploadFileMaxSize
+    });
     const { file, data, bucketName } = await upload.doUpload<FileCreateDatasetCollectionParams>(
       req,
       res,
@@ -69,6 +67,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse<any>): CreateCo
     const { rawText } = await readRawTextByLocalFile({
       teamId,
       path: file.path,
+      encoding: file.encoding,
       metadata: {
         ...fileMetadata,
         relatedId: relatedImgId
@@ -83,6 +82,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse<any>): CreateCo
       path: file.path,
       filename: file.originalname,
       contentType: file.mimetype,
+      encoding: file.encoding,
       metadata: fileMetadata
     });
 

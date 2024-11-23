@@ -7,9 +7,12 @@ import { useQuery } from '@tanstack/react-query';
 import { useUserStore } from '@/web/support/user/useUserStore';
 import { getUnreadCount } from '@/web/support/user/inform/api';
 import dynamic from 'next/dynamic';
+import { useI18nLng } from '@fastgpt/web/hooks/useI18n';
 
 import Auth from './auth';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
+import { useMount } from 'ahooks';
+
 const Navbar = dynamic(() => import('./navbar'));
 const NavbarPhone = dynamic(() => import('./navbarPhone'));
 const UpdateInviteModal = dynamic(() => import('@/components/support/user/team/UpdateInviteModal'));
@@ -46,12 +49,14 @@ const Layout = ({ children }: { children: JSX.Element }) => {
   const { loading, feConfigs, isNotSufficientModal } = useSystemStore();
   const { isPc } = useSystem();
   const { userInfo } = useUserStore();
+  const { setUserDefaultLng } = useI18nLng();
 
   const isChatPage = useMemo(
     () => router.pathname === '/chat' && Object.values(router.query).join('').length !== 0,
     [router.pathname, router.query]
   );
 
+  // System hook
   const { data, refetch: refetchUnRead } = useQuery(['getUnreadCount'], getUnreadCount, {
     enabled: !!userInfo && !!feConfigs.isPlus,
     refetchInterval: 10000
@@ -60,6 +65,10 @@ const Layout = ({ children }: { children: JSX.Element }) => {
   const importantInforms = data?.importantInforms || [];
 
   const isHideNavbar = !!pcUnShowLayoutRoute[router.pathname];
+
+  useMount(() => {
+    setUserDefaultLng();
+  });
 
   return (
     <>

@@ -26,11 +26,9 @@ import { useRequest, useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import { useConfirm } from '@fastgpt/web/hooks/useConfirm';
 import { getDefaultIndex, getSourceNameIcon } from '@fastgpt/global/core/dataset/utils';
 import { DatasetDataIndexItemType } from '@fastgpt/global/core/dataset/type';
-import SideTabs from '@/components/SideTabs';
 import DeleteIcon from '@fastgpt/web/components/common/Icon/delete';
 import { defaultCollectionDetail } from '@/web/core/dataset/constants';
 import { getDocPath } from '@/web/common/system/doc';
-import RawSourceBox from '@/components/core/dataset/RawSourceBox';
 import MyBox from '@fastgpt/web/components/common/MyBox';
 import { getErrText } from '@fastgpt/global/common/error/utils';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
@@ -101,7 +99,9 @@ const InputDataModal = ({
               mr={'0.38rem'}
               color={'myGray.500'}
               ml={1}
-              onClick={() => window.open(getDocPath('/docs/course/dataset_engine'), '_blank')}
+              onClick={() =>
+                window.open(getDocPath('/docs/guide/knowledge_base/dataset_engine/'), '_blank')
+              }
               _hover={{
                 color: 'primary.600',
                 cursor: 'pointer'
@@ -204,13 +204,12 @@ const InputDataModal = ({
         a: '',
         indexes: []
       });
-      console.log('执行onSuccess');
       onSuccess(e);
     },
     errorToast: t('common:common.error.unKnow')
   });
-  // update
 
+  // update
   const { runAsync: onUpdateData, loading: isUpdating } = useRequest2(
     async (e: InputDataType) => {
       if (!dataId) return Promise.reject(t('common:common.error.unKnow'));
@@ -261,9 +260,12 @@ const InputDataModal = ({
             className={'textEllipsis'}
             wordBreak={'break-all'}
             fontSize={'md'}
-            maxW={['200px', '80vw']}
+            maxW={['200px', '50vw']}
             fontWeight={'500'}
             color={'myGray.900'}
+            whiteSpace={'nowrap'}
+            overflow={'hidden'}
+            textOverflow={'ellipsis'}
           >
             {collection.sourceName || t('common:common.UnKnow Source')}
           </Box>
@@ -353,7 +355,7 @@ const InputTab = ({
 
   return (
     <>
-      <Flex h={'100%'} gap={6} flexDir={['column', 'row']} w={'100%'} pr={2}>
+      <Flex h={'100%'} gap={6} flexDir={['column', 'row']} w={'100%'}>
         <Flex flexDir={'column'} flex={1}>
           <Flex mb={2} fontWeight={'medium'} fontSize={'sm'} alignItems={'center'} h={8}>
             <Box color={'red.600'}>*</Box>
@@ -435,7 +437,7 @@ const DataIndex = ({
 
   return (
     <>
-      <Flex mt={3} gap={3} flexDir={'column'} pr={2}>
+      <Flex mt={3} gap={3} flexDir={'column'}>
         <Box
           p={4}
           borderRadius={'md'}

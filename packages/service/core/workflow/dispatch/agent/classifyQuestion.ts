@@ -2,7 +2,7 @@ import { chats2GPTMessages } from '@fastgpt/global/core/chat/adapt';
 import { countMessagesTokens } from '../../../../common/string/tiktoken/index';
 import type { ChatItemType } from '@fastgpt/global/core/chat/type.d';
 import { ChatItemValueTypeEnum, ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
-import { getAIApi } from '../../../ai/config';
+import { createChatCompletion } from '../../../ai/config';
 import type { ClassifyQuestionAgentItemType } from '@fastgpt/global/core/workflow/template/system/classifyQuestion/type';
 import { NodeInputKeyEnum, NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
@@ -17,6 +17,7 @@ import { DispatchNodeResultType } from '@fastgpt/global/core/workflow/runtime/ty
 import { chatValue2RuntimePrompt } from '@fastgpt/global/core/chat/adapt';
 import { getHandleId } from '@fastgpt/global/core/workflow/utils';
 import { loadRequestMessages } from '../../../chat/utils';
+import { llmCompletionsBodyFormat } from '../../../ai/utils';
 
 type Props = ModuleDispatchProps<{
   [NodeInputKeyEnum.aiModel]: string;
@@ -103,10 +104,10 @@ const completions = async ({
               systemPrompt: systemPrompt || 'null',
               typeList: agents
                 .map((item) => `{"类型ID":"${item.key}", "问题类型":"${item.value}"}`)
-                .join('------'),
+                .join('\n------\n'),
               history: histories
                 .map((item) => `${item.obj}:${chatValue2RuntimePrompt(item.value).text}`)
-                .join('------'),
+                .join('\n------\n'),
               question: userChatInput
             })
           }
@@ -119,16 +120,17 @@ const completions = async ({
     useVision: false
   });
 
-  const ai = getAIApi({
-    userKey: user.openaiAccount,
-    timeout: 480000
-  });
-
-  const data = await ai.chat.completions.create({
-    model: cqModel.model,
-    temperature: 0.01,
-    messages: requestMessages,
-    stream: false
+  const { response: data } = await createChatCompletion({
+    body: llmCompletionsBodyFormat(
+      {
+        model: cqModel.model,
+        temperature: 0.01,
+        messages: requestMessages,
+        stream: false
+      },
+      cqModel
+    ),
+    userKey: user.openaiAccount
   });
   const answer = data.choices?.[0].message?.content || '';
 

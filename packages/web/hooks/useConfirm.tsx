@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDisclosure, Button, ModalBody, ModalFooter } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 import MyModal from '../components/common/MyModal';
+import { useMemoizedFn } from 'ahooks';
 
 export const useConfirm = (props?: {
   title?: string;
@@ -44,7 +45,7 @@ export const useConfirm = (props?: {
   const confirmCb = useRef<Function>();
   const cancelCb = useRef<any>();
 
-  const openConfirm = useCallback(
+  const openConfirm = useMemoizedFn(
     (confirm?: Function, cancel?: any, customContent?: string | React.ReactNode) => {
       confirmCb.current = confirm;
       cancelCb.current = cancel;
@@ -52,11 +53,10 @@ export const useConfirm = (props?: {
       customContent && setCustomContent(customContent);
 
       return onOpen;
-    },
-    []
+    }
   );
 
-  const ConfirmModal = useCallback(
+  const ConfirmModal = useMemoizedFn(
     ({
       closeText = t('common:common.Cancel'),
       confirmText = t('common:common.Confirm'),
@@ -75,15 +75,22 @@ export const useConfirm = (props?: {
       const [requesting, setRequesting] = useState(false);
 
       useEffect(() => {
-        timer.current = setInterval(() => {
-          setCountDownAmount((val) => {
-            if (val <= 0) {
-              clearInterval(timer.current);
-            }
-            return val - 1;
-          });
-        }, 1000);
-      }, []);
+        if (isOpen) {
+          setCountDownAmount(countDown);
+          timer.current = setInterval(() => {
+            setCountDownAmount((val) => {
+              if (val <= 0) {
+                clearInterval(timer.current);
+              }
+              return val - 1;
+            });
+          }, 1000);
+
+          return () => {
+            clearInterval(timer.current);
+          };
+        }
+      }, [isOpen]);
 
       return (
         <MyModal isOpen={isOpen} iconSrc={iconSrc} title={title} maxW={['90vw', '400px']}>
@@ -128,8 +135,7 @@ export const useConfirm = (props?: {
           )}
         </MyModal>
       );
-    },
-    [customContent, hideFooter, iconSrc, isOpen, map.variant, onClose, showCancel, t, title]
+    }
   );
 
   return {

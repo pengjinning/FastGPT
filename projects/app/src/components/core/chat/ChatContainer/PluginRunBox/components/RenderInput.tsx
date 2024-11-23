@@ -1,16 +1,25 @@
-import React, { useEffect, useMemo } from 'react';
-import { Controller } from 'react-hook-form';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Controller, useFieldArray } from 'react-hook-form';
 import RenderPluginInput from './renderPluginInput';
 import { Box, Button, Flex } from '@chakra-ui/react';
 import { useTranslation } from 'next-i18next';
 import { useContextSelector } from 'use-context-selector';
 import { PluginRunContext } from '../context';
 import { WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
-import { isEqual } from 'lodash';
-import { AppChatConfigType } from '@fastgpt/global/core/app/type';
 import Markdown from '@/components/Markdown';
+import MyIcon from '@fastgpt/web/components/common/Icon';
+import FormLabel from '@fastgpt/web/components/common/MyBox/FormLabel';
+import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
+import { useFileUpload } from '../../ChatBox/hooks/useFileUpload';
+import FilePreview from '../../components/FilePreview';
+import { UserChatItemValueItemType } from '@fastgpt/global/core/chat/type';
+import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
+import { ChatBoxInputFormType } from '../../ChatBox/type';
+import { FlowNodeInputItemType } from '@fastgpt/global/core/workflow/type/io';
 
 const RenderInput = () => {
+  const { t } = useTranslation();
+
   const {
     pluginInputs,
     variablesForm,
@@ -19,10 +28,11 @@ const RenderInput = () => {
     onNewChat,
     onSubmit,
     isChatting,
-    chatConfig
+    chatConfig,
+    chatId,
+    outLinkAuthData
   } = useContextSelector(PluginRunContext, (v) => v);
 
-  const { t } = useTranslation();
   const {
     control,
     handleSubmit,
@@ -31,49 +41,133 @@ const RenderInput = () => {
     formState: { errors }
   } = variablesForm;
 
-  const defaultFormValues = useMemo(() => {
-    return pluginInputs.reduce(
-      (acc, input) => {
-        acc[input.key] = input.defaultValue;
-        return acc;
-      },
-      {} as Record<string, any>
-    );
-  }, [pluginInputs]);
-
-  const historyFormValues = useMemo(() => {
-    if (histories.length === 0) return undefined;
-
-    try {
-      const inputValueString = histories[0].value[0].text?.content || '[]';
-      return JSON.parse(inputValueString).reduce(
-        (
-          acc: Record<string, any>,
-          {
-            key,
-            value
-          }: {
-            key: string;
-            value: any;
-          }
-        ) => ({ ...acc, [key]: value }),
-        {}
-      );
-    } catch (error) {
-      console.error('Failed to parse input value:', error);
-      return undefined;
-    }
-  }, [histories]);
-
-  useEffect(() => {
-    if (isEqual(getValues(), defaultFormValues)) return;
-    reset(historyFormValues || defaultFormValues);
-  }, [defaultFormValues, getValues, historyFormValues, reset]);
-
+  /* ===> Global files(abandon) */
+  const fileCtrl = useFieldArray({
+    control: variablesForm.control,
+    name: 'files'
+  });
+  const {
+    File,
+    onOpenSelectFile,
+    fileList,
+    onSelectFile,
+    uploadFiles,
+    selectFileIcon,
+    showSelectFile,
+    showSelectImg,
+    removeFiles,
+    hasFileUploading
+  } = useFileUpload({
+    outLinkAuthData,
+    chatId: chatId || '',
+    fileSelectConfig: chatConfig?.fileSelectConfig,
+    fileCtrl
+  });
   const isDisabledInput = histories.length > 0;
 
+  useRequest2(uploadFiles, {
+    manual: false,
+    errorToast: t('common:upload_file_error'),
+    refreshDeps: [fileList, outLinkAuthData, chatId]
+  });
+  /* Global files(abandon) <=== */
+
+  const [restartData, setRestartData] = useState<ChatBoxInputFormType>();
+  const onClickNewChat = useCallback(
+    (e: ChatBoxInputFormType) => {
+      setRestartData(e);
+      onNewChat?.();
+    },
+    [onNewChat, setRestartData]
+  );
+
+  // Get plugin input components
+  const formatPluginInputs = useMemo(() => {
+    if (histories.length === 0) return pluginInputs;
+    try {
+      const historyValue = histories[0]?.value as UserChatItemValueItemType[];
+      const inputValueString = historyValue.find((item) => item.type === 'text')?.text?.content;
+
+      if (!inputValueString) return pluginInputs;
+      return JSON.parse(inputValueString) as FlowNodeInputItemType[];
+    } catch (error) {
+      console.error('Failed to parse input value:', error);
+      return pluginInputs;
+    }
+  }, [histories, pluginInputs]);
+
+  // Reset input value
+  useEffect(() => {
+    // Set config default value
+    if (histories.length === 0) {
+      if (restartData) {
+        reset(restartData);
+        setRestartData(undefined);
+        return;
+      }
+
+      const defaultFormValues = formatPluginInputs.reduce(
+        (acc, input) => {
+          acc[input.key] = input.defaultValue;
+          return acc;
+        },
+        {} as Record<string, any>
+      );
+
+      reset({
+        files: [],
+        variables: defaultFormValues
+      });
+      return;
+    }
+
+    // Set history to default value
+    const historyVariables = (() => {
+      const historyValue = histories[0]?.value as UserChatItemValueItemType[];
+      if (!historyValue) return undefined;
+
+      try {
+        const inputValueString = historyValue.find((item) => item.type === 'text')?.text?.content;
+        return (
+          inputValueString &&
+          JSON.parse(inputValueString).reduce(
+            (
+              acc: Record<string, any>,
+              {
+                key,
+                value
+              }: {
+                key: string;
+                value: any;
+              }
+            ) => ({ ...acc, [key]: value }),
+            {}
+          )
+        );
+      } catch (error) {
+        console.error('Failed to parse input value:', error);
+        return undefined;
+      }
+    })();
+    // Parse history file
+    const historyFileList = (() => {
+      const historyValue = histories[0]?.value as UserChatItemValueItemType[];
+      return historyValue?.filter((item) => item.type === 'file').map((item) => item.file);
+    })();
+
+    reset({
+      variables: historyVariables,
+      files: historyFileList
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [histories]);
+
+  const [uploading, setUploading] = useState(false);
+
+  const fileUploading = uploading || hasFileUploading;
+
   return (
-    <>
+    <Box>
       {/* instruction */}
       {chatConfig?.instruction && (
         <Box
@@ -88,13 +182,41 @@ const RenderInput = () => {
           <Markdown source={chatConfig.instruction} />
         </Box>
       )}
-
-      {pluginInputs.map((input) => {
+      {/* file select(Abandoned) */}
+      {(showSelectFile || showSelectImg) && (
+        <Box mb={5}>
+          <Flex alignItems={'center'}>
+            <FormLabel fontSize={'md'} fontWeight={'medium'}>
+              {t('chat:file_input')}
+            </FormLabel>
+            <QuestionTip ml={1} label={t('chat:file_input_tip')} />
+            <Box flex={1} />
+            {histories.length === 0 && (
+              <Button
+                leftIcon={<MyIcon name={selectFileIcon as any} w={'16px'} />}
+                variant={'whiteBase'}
+                onClick={() => {
+                  onOpenSelectFile();
+                }}
+              >
+                {t('chat:select')}
+              </Button>
+            )}
+            <File onSelect={(files) => onSelectFile({ files })} />
+          </Flex>
+          <FilePreview
+            fileList={fileList}
+            removeFiles={isDisabledInput ? undefined : removeFiles}
+          />
+        </Box>
+      )}
+      {/* Filed */}
+      {formatPluginInputs.map((input) => {
         return (
           <Controller
-            key={input.key}
+            key={`variables.${input.key}`}
             control={control}
-            name={input.key}
+            name={`variables.${input.key}`}
             rules={{
               validate: (value) => {
                 if (!input.required) return true;
@@ -112,28 +234,34 @@ const RenderInput = () => {
                   isDisabled={isDisabledInput}
                   isInvalid={errors && Object.keys(errors).includes(input.key)}
                   input={input}
+                  setUploading={setUploading}
                 />
               );
             }}
           />
         );
       })}
+      {/* Run Button */}
       {onStartChat && onNewChat && (
         <Flex justifyContent={'end'} mt={8}>
           <Button
             isLoading={isChatting}
+            isDisabled={fileUploading}
             onClick={() => {
-              if (histories.length > 0) {
-                return onNewChat();
-              }
-              handleSubmit(onSubmit)();
+              handleSubmit((e) => {
+                if (isDisabledInput) {
+                  onClickNewChat(e);
+                } else {
+                  onSubmit(e);
+                }
+              })();
             }}
           >
-            {histories.length > 0 ? t('common:common.Restart') : t('common:common.Run')}
+            {isDisabledInput ? t('common:common.Restart') : t('common:common.Run')}
           </Button>
         </Flex>
       )}
-    </>
+    </Box>
   );
 };
 

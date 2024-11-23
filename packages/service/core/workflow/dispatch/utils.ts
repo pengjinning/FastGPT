@@ -5,21 +5,27 @@ import {
   WorkflowIOValueTypeEnum,
   NodeOutputKeyEnum
 } from '@fastgpt/global/core/workflow/constants';
-import { RuntimeEdgeItemType } from '@fastgpt/global/core/workflow/runtime/type';
+import {
+  RuntimeEdgeItemType,
+  SystemVariablesType
+} from '@fastgpt/global/core/workflow/runtime/type';
 import { responseWrite } from '../../../common/response';
 import { NextApiResponse } from 'next';
 import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
+import { getNanoid } from '@fastgpt/global/common/string/tools';
 
 export const getWorkflowResponseWrite = ({
   res,
   detail,
   streamResponse,
-  id
+  id = getNanoid(24),
+  showNodeStatus = true
 }: {
   res?: NextApiResponse;
   detail: boolean;
   streamResponse: boolean;
-  id: string;
+  id?: string;
+  showNodeStatus?: boolean;
 }) => {
   return ({
     write,
@@ -36,17 +42,27 @@ export const getWorkflowResponseWrite = ({
 
     if (!res || res.closed || !useStreamResponse) return;
 
-    const detailEvent = [
-      SseResponseEventEnum.error,
-      SseResponseEventEnum.flowNodeStatus,
-      SseResponseEventEnum.flowResponses,
-      SseResponseEventEnum.interactive,
-      SseResponseEventEnum.toolCall,
-      SseResponseEventEnum.toolParams,
-      SseResponseEventEnum.toolResponse,
-      SseResponseEventEnum.updateVariables
-    ];
-    if (!detail && detailEvent.includes(event)) return;
+    // Forbid show detail
+    const detailEvent: Record<string, 1> = {
+      [SseResponseEventEnum.error]: 1,
+      [SseResponseEventEnum.flowNodeStatus]: 1,
+      [SseResponseEventEnum.flowResponses]: 1,
+      [SseResponseEventEnum.interactive]: 1,
+      [SseResponseEventEnum.toolCall]: 1,
+      [SseResponseEventEnum.toolParams]: 1,
+      [SseResponseEventEnum.toolResponse]: 1,
+      [SseResponseEventEnum.updateVariables]: 1
+    };
+    if (!detail && detailEvent[event]) return;
+
+    // Forbid show running status
+    const statusEvent: Record<string, 1> = {
+      [SseResponseEventEnum.flowNodeStatus]: 1,
+      [SseResponseEventEnum.toolCall]: 1,
+      [SseResponseEventEnum.toolParams]: 1,
+      [SseResponseEventEnum.toolResponse]: 1
+    };
+    if (!showNodeStatus && statusEvent[event]) return;
 
     responseWrite({
       res,
@@ -144,8 +160,9 @@ export const removeSystemVariable = (variables: Record<string, any>) => {
 
   return copyVariables;
 };
-export const filterSystemVariables = (variables: Record<string, any>) => {
+export const filterSystemVariables = (variables: Record<string, any>): SystemVariablesType => {
   return {
+    userId: variables.userId,
     appId: variables.appId,
     chatId: variables.chatId,
     responseChatItemId: variables.responseChatItemId,

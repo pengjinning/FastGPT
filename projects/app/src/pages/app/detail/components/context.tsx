@@ -1,4 +1,4 @@
-import { Dispatch, ReactNode, SetStateAction, useCallback, useState } from 'react';
+import { Dispatch, ReactNode, SetStateAction, useCallback, useMemo, useState } from 'react';
 import { createContext } from 'use-context-selector';
 import { defaultApp } from '@/web/core/app/constants';
 import { delAppById, getAppDetailById, putAppById } from '@/web/core/app/api';
@@ -11,7 +11,6 @@ import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 import dynamic from 'next/dynamic';
 import { useDisclosure } from '@chakra-ui/react';
 import { useConfirm } from '@fastgpt/web/hooks/useConfirm';
-import { useI18n } from '@/web/context/I18n';
 import type { StoreNodeItemType } from '@fastgpt/global/core/workflow/type/node';
 import type { StoreEdgeItemType } from '@fastgpt/global/core/workflow/type/edge';
 
@@ -161,7 +160,7 @@ const AppContextProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const { openConfirm: openConfirmDel, ConfirmModal: ConfirmDelModal } = useConfirm({
-    content: t('app:confirm_del_app_tip'),
+    content: t('app:confirm_del_app_tip', { name: appDetail.name }),
     type: 'delete'
   });
   const { runAsync: deleteApp } = useRequest2(
@@ -177,24 +176,49 @@ const AppContextProvider = ({ children }: { children: ReactNode }) => {
       errorToast: t('common:common.Delete Failed')
     }
   );
-  const onDelApp = useCallback(() => openConfirmDel(deleteApp)(), [deleteApp, openConfirmDel]);
+  const onDelApp = useCallback(
+    () =>
+      openConfirmDel(
+        deleteApp,
+        undefined,
+        t('app:confirm_del_app_tip', { name: appDetail.name })
+      )(),
+    [appDetail.name, deleteApp, openConfirmDel, t]
+  );
 
-  const contextValue: AppContextType = {
-    appId,
-    currentTab,
-    route2Tab,
-    appDetail,
-    setAppDetail,
-    loadingApp,
-    updateAppDetail,
-    onOpenInfoEdit,
-    onOpenTeamTagModal,
-    onDelApp,
-    onSaveApp,
-    appLatestVersion,
-    reloadAppLatestVersion,
-    reloadApp
-  };
+  const contextValue: AppContextType = useMemo(
+    () => ({
+      appId,
+      currentTab,
+      route2Tab,
+      appDetail,
+      setAppDetail,
+      loadingApp,
+      updateAppDetail,
+      onOpenInfoEdit,
+      onOpenTeamTagModal,
+      onDelApp,
+      onSaveApp,
+      appLatestVersion,
+      reloadAppLatestVersion,
+      reloadApp
+    }),
+    [
+      appDetail,
+      appId,
+      appLatestVersion,
+      currentTab,
+      loadingApp,
+      onDelApp,
+      onOpenInfoEdit,
+      onOpenTeamTagModal,
+      onSaveApp,
+      reloadApp,
+      reloadAppLatestVersion,
+      route2Tab,
+      updateAppDetail
+    ]
+  );
 
   return (
     <AppContext.Provider value={contextValue}>

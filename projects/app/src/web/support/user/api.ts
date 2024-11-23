@@ -15,6 +15,7 @@ export const sendAuthCode = (data: {
   username: string;
   type: `${UserAuthTypeEnum}`;
   googleToken: string;
+  captcha: string;
 }) => POST(`/proApi/support/user/inform/sendAuthCode`, data);
 
 export const getTokenLogin = () =>
@@ -29,17 +30,25 @@ export const postRegister = ({
   username,
   password,
   code,
-  inviterId
+  inviterId,
+  bd_vid,
+  fastgpt_sem
 }: {
   username: string;
   code: string;
   password: string;
   inviterId?: string;
+  bd_vid?: string;
+  fastgpt_sem?: {
+    keyword: string;
+  };
 }) =>
   POST<ResLogin>(`/proApi/support/user/account/register/emailAndPhone`, {
     username,
     code,
     inviterId,
+    bd_vid,
+    fastgpt_sem,
     password: hashStr(password)
   });
 
@@ -82,3 +91,8 @@ export const getWXLoginQR = () =>
 
 export const getWXLoginResult = (code: string) =>
   GET<ResLogin>(`/proApi/support/user/account/login/wx/getResult`, { code });
+
+export const getCaptchaPic = (username: string) =>
+  GET<{
+    captchaImage: string;
+  }>('/proApi/support/user/account/captcha/getImgCaptcha', { username });
